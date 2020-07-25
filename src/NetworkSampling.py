@@ -27,7 +27,7 @@ class NSMethod(NamedTuple):
     params: Dict[str, Any]
 
 
-class NXAgent(Agent):
+class NSAgent(Agent):
     """Agent integrated with networkx"""
 
     def __init__(self, unique_id: int, model: NSModel, node, method: NSMethod) -> None:
@@ -37,7 +37,7 @@ class NXAgent(Agent):
         Parameters
         unique_id - unique id inherited from mesa.Agent
         model - model inherited from mesa.Model
-        node - current node NXAgent is occupying in model
+        node - current node NSAgent is occupying in model
         """
         super().__init__(unique_id=unique_id, model=model)
         try:
@@ -54,7 +54,7 @@ class NXAgent(Agent):
 
     @property
     def active(self) -> bool:
-        """Indicate whether this NXAgent is active each iteration or paused"""
+        """Indicate whether this NSAgent is active each iteration or paused"""
         return self.__active
 
     @active.setter
@@ -63,7 +63,7 @@ class NXAgent(Agent):
         Set active state
 
         Parameters
-        state - boolean indicating whether this NXAgent is active or not
+        state - boolean indicating whether this NSAgent is active or not
         """
         self.__active = state
 
@@ -99,16 +99,16 @@ class NXAgent(Agent):
 
     @property
     def node(self) -> Any:
-        """Current node or vertex NXAgent owns"""
+        """Current node or vertex NSAgent owns"""
         return self.__node
 
     @node.setter
     def node(self, new_node) -> None:
         """
-        Sets new node or vertex for NXAgent to own
+        Sets new node or vertex for NSAgent to own
 
         Parameters
-        new_node - new node for current NXAgent object to be located at
+        new_node - new node for current NSAgent object to be located at
         """
         # Error checking for valid new node (existing in model) 
         try:
@@ -184,15 +184,15 @@ class NXAgent(Agent):
 class NSModel(Model):
     """Model integrated with networkx and base class for random walks"""
 
-    def __init__(self, method: NSMethod, network: nx.Graph, num_agents: int, start_node) -> None:
+    def __init__(self, method: NSMethod, network: nx.Graph, n_agents: int, start_node) -> None:
         """
         Initializes base network
 
         Parameters
-        method - NSMethod object to uniformly assign to each NXAgent object initially
+        method - NSMethod object to uniformly assign to each NSAgent object initially
         network - nx.Graph object model is based on
-        num_agents - number of NXAgent objects to add to schedule
-        start_node - node where all NXAgent objects initially reside
+        n_agents - number of NSAgent objects to add to schedule
+        start_node - node where all NSAgent objects initially reside
         """
         super().__init__()
 
@@ -200,7 +200,7 @@ class NSModel(Model):
         try:
             if nx.is_empty(G=network):
                 raise ValueError('network does not contain any nodes')
-            if num_agents < 0:
+            if n_agents < 0:
                 raise ValueError('number of agents cannot be negative')
             if start_node not in network.nodes:
                 raise ValueError('start node is not in network')
@@ -212,8 +212,8 @@ class NSModel(Model):
         self.__network = network
         self.__start_node = start_node
         self.schedule = SimultaneousActivation(model=self)
-        for ID in np.arange(num_agents):
-            a = NXAgent(unique_id=ID, model=self, node=start_node, method=method)
+        for ID in np.arange(n_agents):
+            a = NSAgent(unique_id=ID, model=self, node=start_node, method=method)
             self.schedule.add(agent=a)
 
     @property
@@ -227,13 +227,13 @@ class NSModel(Model):
         Sets new network for model
 
         Parameters
-        new_network - new networkx graph for NXAgent objects to traverse through as model
+        new_network - new networkx graph for NSAgent objects to traverse through as model
         """
         self.__network = new_network
 
     @property
     def number_of_agents(self) -> int:
-        """Count of NXAgents used by the model"""
+        """Count of NSAgents used by the model"""
         return self.agents.size
 
     @property
@@ -273,7 +273,7 @@ class NSModel(Model):
     # MUTATORS
     def reset(self, method: NSMethod = None) -> None:
         """
-        Resets all NXAgents back to start_node with cleared visit history
+        Resets all NSAgents back to start_node with cleared visit history
 
         Parameters
         method - potentially new networks sampling method to use; otherwise, None indicates no change
@@ -286,10 +286,10 @@ class NSModel(Model):
 
     def step(self, n_steps: int, func: Callable = None, params: Dict[str, Any] = None) -> None:
         """
-        Activates model to run n steps for each NXAgent
+        Activates model to run n steps for each NSAgent
 
         Parameters
-        n_steps - number of steps for each NXAgent to step through
+        n_steps - number of steps for each NSAgent to step through
         model_func - intermittent function called after advancing each step
         params -
         """

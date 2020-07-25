@@ -2,14 +2,14 @@
 import copy
 import networkx as nx
 import numpy as np
-from typing import Iterable
+from NetworkSampling import NSMethod, NSAgent, NSModel
 
-def random_walk(self, agent: NXAgent) -> None:
+def random_walk(self, agent: NSAgent) -> None:
     """
     Random Walk Algorithm
 
     Parameters
-    agent - NXAgent object that contributes to the sampling
+    agent - NSAgent object that contributes to the sampling
     """
     # Is the sampling method probabilistic or non-probabilistic
     self.probabilistic = True
@@ -21,12 +21,12 @@ def random_walk(self, agent: NXAgent) -> None:
     agent.node = next_node
     agent.visited_nodes = np.append(arr=agent.visited_nodes, values=next_node)
 
-def random_walk_weighted(self, agent: NXAgent):
+def random_walk_weighted(self, agent: NSAgent) -> None:
     """
     Random Walk Algorithm chooses next vertex based on percentage of vertex weight in neighborhood
 
     Parameters
-    agent - NXAgent object that contributes to the sampling
+    agent - NSAgent object that contributes to the sampling
     """
     # Is the sampling method probabilistic or non-probabilistic
     self.probabilistic = True
@@ -47,7 +47,7 @@ def random_walk_weighted(self, agent: NXAgent):
     agent.visited_nodes = np.append(arr=agent.visited_nodes, values=next_node)
 
 # Proposed method
-def caterpillar_quota_walk(self, agent: NXAgent, Q1: float, Q2: float):
+def caterpillar_quota_walk(self, agent: NSAgent, Q1: float, Q2: float) -> None:
     """
     Proposed algorithm takes in two percentage quotas (Q1, Q2 such that Q1 < Q2 <= 100%). The
     minimal quorum of weighted neighbors, when ranked from highest to lowest weight, that
@@ -57,7 +57,7 @@ def caterpillar_quota_walk(self, agent: NXAgent, Q1: float, Q2: float):
     of the sampled subgraph based on the caterpillar tree graph model.
 
     Parameters
-    agent - NXAgent object that contributes to the sampling
+    agent - NSAgent object that contributes to the sampling
     """
     # Is the sampling method probabilistic or non-probabilistic
     self.probabilistic = False
@@ -71,13 +71,13 @@ def caterpillar_quota_walk(self, agent: NXAgent, Q1: float, Q2: float):
             nt.nodes[n]['weight'] = float(0)
 
     # Neighboring nodes ranked from highest to lowest weights
-    neighbors_high_to_low = sorted(neighbors, key=lambda n: nt.nodes[n]['weight'], reverse=True)
+    neighbors_high_to_low = sorted(neighbors, key=lambda neighbor: nt.nodes[neighbor]['weight'], reverse=True)
     weights = [nt.nodes[n]['weight'] for n in neighbors_high_to_low] # Ranked from highest to lowest
     sum_weights = np.sum(a=weights, axis=None, dtype=float) # Sum of all weights from neighboring nodes
 
     # Choosing nodes to contribute to sampling
     Q1_quota_weight = Q1 * sum_weights # Expected cumulative weight of Q1 quota
-    Q2_quota_weight = Q2 * sum_weights # Expected cumulative weightsight of Q2 quota
+    Q2_quota_weight = Q2 * sum_weights # Expected cumulative weights of Q2 quota
     Q1_index, Q2_index = None, None
     partial_sum = float(0)
     Q1_index_captured = False
@@ -96,7 +96,7 @@ def caterpillar_quota_walk(self, agent: NXAgent, Q1: float, Q2: float):
     for index in np.arange(0, Q1_index + 1):
         next_node = neighbors_high_to_low[index]
         nt.nodes[next_node]['Central Axis'] = True
-        new_agent = NXAgent(unique_id=schedule.get_agent_count() + 1, model=agent.model, node=next_node, method=nsmethod)
+        new_agent = NSAgent(unique_id=schedule.get_agent_count() + 1, model=agent.model, node=next_node, method=nsmethod)
         new_agent.extra_properties = copy.deepcopy(x=agent.extra_properties, memo=None)
         new_agent.visited_nodes = np.append(arr=agent.visited_nodes, values=next_node)
         schedule.add(agent=new_agent)
@@ -104,13 +104,13 @@ def caterpillar_quota_walk(self, agent: NXAgent, Q1: float, Q2: float):
     for index in np.arange(Q1_index + 1, Q2_index + 1):
         next_node = neighbors_high_to_low[index]
         nt.nodes[next_node]['Central Axis'] = False
-        new_agent = NXAgent(unique_id=schedule.get_agent_count() + 1, model=agent.model, node=next_node, method=nsmethod)
+        new_agent = NSAgent(unique_id=schedule.get_agent_count() + 1, model=agent.model, node=next_node, method=nsmethod)
         new_agent.extra_properties = copy.deepcopy(x=agent.extra_properties, memo=None)
         new_agent.visited_nodes = np.append(arr=agent.visited_nodes, values=next_node)
         new_agent.active = False
         schedule.add(agent=new_agent)
 
-    # De-activating current NXAgent object
+    # De-activating current NSAgent object
     agent.active = False
 
 
