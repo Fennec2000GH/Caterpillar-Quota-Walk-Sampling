@@ -2,7 +2,7 @@
 import copy
 import networkx as nx
 import numpy as np
-from NetworkSampling import NSMethod, NSAgent, NSModel
+from NetworkSampling import NSMethod, NSAgent
 
 def random_walk(self, agent: NSAgent) -> None:
     """

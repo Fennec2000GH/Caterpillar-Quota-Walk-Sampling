@@ -1,4 +1,6 @@
 
+# DEPRECATED CODE
+
 from collections.abc import Iterable
 import itertools
 import numpy as np

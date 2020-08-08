@@ -13,13 +13,13 @@ class NSMethod(NamedTuple):
     Model for network sampling method
 
     Fields
-    func - callable or function that must take in at last 'agent' as a parameter, and the return
+    :param func: - callable or function that must take in at last 'agent' as a parameter, and the return
     value(s) must be 3-element tuple of format (next_node, next_method: NSMethod, pause: Boolean).
     These fields provide the next node in the model's network for this agent to travel to, a
     possible change in network sampling method for next turn, and whether to pause any further 
     activity of this agent, respectively.
 
-    params - the parameters and corresponding values to properly execute the provided network
+    :param params: - the parameters and corresponding values to properly execute the provided network
     sampling method. The word 'agent' must be in the keys, and the preset value is preferably
     None. Type must be dict of {str: object} KV pairs.
     """
@@ -35,9 +35,10 @@ class NSAgent(Agent):
         Initializes required attributes under Agent
 
         Parameters
-        unique_id - unique id inherited from mesa.Agent
-        model - model inherited from mesa.Model
-        node - current node NSAgent is occupying in model
+        :param unique_id: - unique id inherited from mesa.Agent
+        :param model: - model inherited from mesa.Model
+        :param node: - current node NSAgent is occupying in model
+        :return: None
         """
         super().__init__(unique_id=unique_id, model=model)
         try:
@@ -54,7 +55,11 @@ class NSAgent(Agent):
 
     @property
     def active(self) -> bool:
-        """Indicate whether this NSAgent is active each iteration or paused"""
+        """
+        Indicate whether this NSAgent is active each iteration or paused
+
+        :return: Whether NSAgent has abn active step function
+        """
         return self.__active
 
     @active.setter
@@ -63,28 +68,49 @@ class NSAgent(Agent):
         Set active state
 
         Parameters
-        state - boolean indicating whether this NSAgent is active or not
+        :param state: - boolean indicating whether this NSAgent is active or not
+        :return: None
         """
         self.__active = state
 
     @property
     def extra_properties(self) -> Dict[str, Any]:
-        """Get entire dict of extra properties"""
+        """
+        Get entire dict of extra properties
+
+        :return: Dict of extra properties for NSAgent
+        """
         return self.__extra_properties
 
     @extra_properties.setter
     def extra_properties(self, new_extra_properties: Dict[str, Any]) -> None:
-        """Resets extra properties entirely to another dict"""
+        """
+        Resets extra properties entirely to another dict
+
+        Parameters:
+        :param new_extra_properties: Replacement for current dict of extra properties
+        :return: None
+        """
         self.__extra_properties = new_extra_properties
 
     @property
     def method(self) -> NSMethod:
-        """Get network sampling method employed at each step of ABM"""
+        """
+        Get network sampling method employed at each step of ABM
+
+        :return: NSMethod named tuple holding model's current network sampling method
+        """
         return self.__method
 
     @method.setter
     def method(self, new_method: NSMethod) -> None:
-        """Sets new algorithm / smapling method for agent"""
+        """
+        Sets new algorithm / smapling method for agent
+
+        Parameters:
+        :param new_method: Replacement for current NSMethod object used as model's network sampling method
+        :return: None
+        """
         # Error checking for correct function signature
         sig = signature(new_method.func)
         try:
@@ -99,7 +125,10 @@ class NSAgent(Agent):
 
     @property
     def node(self) -> Any:
-        """Current node or vertex NSAgent owns"""
+        """
+        Current node or vertex NSAgent owns
+        :return: Networkx node NSAgent is located over
+        """
         return self.__node
 
     @node.setter
@@ -108,7 +137,8 @@ class NSAgent(Agent):
         Sets new node or vertex for NSAgent to own
 
         Parameters
-        new_node - new node for current NSAgent object to be located at
+        :param new_node: New node for current NSAgent object to be located at
+        :return: None
         """
         # Error checking for valid new node (existing in model) 
         try:
@@ -119,16 +149,6 @@ class NSAgent(Agent):
             return
         self.__node = new_node
 
-    @property
-    def visited_nodes(self) -> np.ndarray:
-        """Array of visited nodes"""
-        return self.__visited_nodes
-
-    @visited_nodes.setter
-    def visited_nodes(self, new_visited_nodes: np.ndarray) -> None:
-        """Sets new history of visited nodes"""
-        self.__visited_nodes = new_visited_nodes
-
     # ACCESSORS
     def get_network(self) -> nx.Graph:
         """Gets Networkx object, ie the network to be used in the model"""
@@ -138,14 +158,23 @@ class NSAgent(Agent):
         """Gets value associated with extra property"""
         return self.__extra_properties.get(extra_property_name, default)
 
+    def get_visited_nodes(self) -> np.ndarray:
+        """
+        Array of visited nodes
+
+        :return: Numpy array of visited nodes by NSAgent during sampling run
+        """
+        return self.__visited_nodes
+
     # MUTATORS
     def set_extra_property(self, key: str, value: Any) -> None:
         """
         Sets new extra property KV pair
 
         Parameters
-        key - the key
-        value - corresponding value
+        :param key: the key
+        :param value: the corresponding value
+        :return: None
         """
         self.__extra_properties.update({key: value})
 
@@ -154,21 +183,34 @@ class NSAgent(Agent):
         Sets many extra properties simultaneously
 
         Parameters
-        kwargs - KV pairs to insert as new extra properties
+        :param kwargs: Key-Value pairs to insert as new extra properties
+        :return: None
         """
         for key, value in kwargs.items():
             self.set_extra_property(key=str(key), value=value)
 
     def clear_extra_properties(self) -> None:
-        """Empty out dict of extra properties"""
+        """
+        Empty out dict of extra properties
+
+        :return: None
+        """
         self.__extra_properties.clear()
 
     def clear_visited_nodes(self) -> None:
-        """Clears history of visited nodes"""
+        """
+        Clears history of visited nodes
+
+        :return: None
+        """
         self.__visited_nodes.clear()
 
     def step(self) -> None:
-        """What the agent does at each step of ABM"""
+        """
+        What the agent does at each step of ABM
+
+        :return: None
+        """
         # Returns new node(s) and possibly a new algorithm for next time
         # For the second returned value, the algorithm stays the same if True is returned
         # Otherwise if False, the agent stops any more actions and pauses from then on
@@ -184,15 +226,16 @@ class NSAgent(Agent):
 class NSModel(Model):
     """Model integrated with networkx and base class for random walks"""
 
-    def __init__(self, method: NSMethod, network: nx.Graph, n_agents: int, start_node) -> None:
+    def __init__(self, method: NSMethod, network: nx.Graph, n_agents: int, start_node: Any) -> None:
         """
         Initializes base network
 
         Parameters
-        method - NSMethod object to uniformly assign to each NSAgent object initially
-        network - nx.Graph object model is based on
-        n_agents - number of NSAgent objects to add to schedule
-        start_node - node where all NSAgent objects initially reside
+        :param method: NSMethod object to uniformly assign to each NSAgent object initially
+        :param network: nx.Graph object model is based on
+        :param n_agents: number of NSAgent objects to add to schedule
+        :param start_node: - node where all NSAgent objects initially reside
+        :return: None
         """
         super().__init__()
 
@@ -218,7 +261,11 @@ class NSModel(Model):
 
     @property
     def network(self) -> nx.Graph:
-        """Base network holding the model"""
+        """
+        Base network holding the model
+
+        :return: Networkx graph object that the model currently uses
+        """
         return self.__network
 
     @network.setter
@@ -227,23 +274,38 @@ class NSModel(Model):
         Sets new network for model
 
         Parameters
-        new_network - new networkx graph for NSAgent objects to traverse through as model
+        :param new_network: new networkx graph for NSAgent objects to traverse through as model
+        :return: None
         """
         self.__network = new_network
 
     @property
     def number_of_agents(self) -> int:
-        """Count of NSAgents used by the model"""
-        return self.agents.size
+        """
+        Count of NSAgents used by the model
+
+        :return: None
+        """
+        return len(self.schedule.agents)
 
     @property
-    def start_node(self):
-        """Gets initialized node that all agents start at"""
+    def start_node(self) -> Any:
+        """
+        Gets initialized node that all agents start at
+
+        :return: Node that all NSAgents initially spawn at
+        """
         return self.__start_node
 
     @start_node.setter
     def start_node(self, new_start_node) -> None:
-        """Resets start node for model"""
+        """
+        Resets start node for model
+
+        Parameters:
+        :param new_start_node: Replacement for current starting node
+        :return: None
+        """
         try:
             if new_start_node not in self.network.nodes:
                 raise ValueError('new_start_node is not in current network')
@@ -254,10 +316,14 @@ class NSModel(Model):
 
     # ACESSORS
     def get_visited_nodes(self) -> np.ndarray:
-        """Gets array of unique visited nodes"""
+        """
+        Gets array of unique visited nodes
+
+        :return: Numpy array of visited nodes
+        """
         visited_nodes = set()
         for agent in self.schedule.agent_buffer(shuffled=False):
-            for n in agent.visited_nodes:
+            for n in agent.get_visited_nodes():
                 visited_nodes.add(n)
         return np.asarray(a=list(visited_nodes))
 
@@ -265,7 +331,7 @@ class NSModel(Model):
         """Gets array of unique visited edges"""
         visited_edges = set()
         for agent in self.schedule.agent_buffer(shuffled=False):
-            vn = agent.visited_nodes
+            vn = agent.get_visited_nodes()
             for index in np.arange(0, vn.size - 1):
                 visited_edges.add((vn[index], vn[index + 1]))
         return np.asarray(a=list(visited_edges))
@@ -276,7 +342,8 @@ class NSModel(Model):
         Resets all NSAgents back to start_node with cleared visit history
 
         Parameters
-        method - potentially new networks sampling method to use; otherwise, None indicates no change
+        :param method: potentially new networks sampling method to use; otherwise, None indicates no change
+        :return: None
         """
         for agent in self.schedule.agent_buffer(shuffled=False):
             agent.clear_visited_nodes()
@@ -289,11 +356,12 @@ class NSModel(Model):
         Activates model to run n steps for each NSAgent
 
         Parameters
-        n_steps - number of steps for each NSAgent to step through
-        model_func - intermittent function called after advancing each step
-        params -
+        :param n_steps: number of steps for each NSAgent to step through
+        :param func: intermittent function called after advancing each step
+        :param params: Parameter values to be passed in for func
+        :return: None
         """
-        for step_number in np.arange(n_steps):
+        for _ in np.arange(n_steps):
             self.schedule.step()
 
             # Executing potential intermittent function
