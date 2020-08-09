@@ -13,13 +13,13 @@ class NSMethod(NamedTuple):
     Model for network sampling method
 
     Fields
-    :param func: - callable or function that must take in at last 'agent' as a parameter, and the return
+    :param func: Callable or function that must take in at last 'agent' as a parameter, and the return
     value(s) must be 3-element tuple of format (next_node, next_method: NSMethod, pause: Boolean).
     These fields provide the next node in the model's network for this agent to travel to, a
     possible change in network sampling method for next turn, and whether to pause any further 
     activity of this agent, respectively.
 
-    :param params: - the parameters and corresponding values to properly execute the provided network
+    :param params: The parameters and corresponding values to properly execute the provided network
     sampling method. The word 'agent' must be in the keys, and the preset value is preferably
     None. Type must be dict of {str: object} KV pairs.
     """
@@ -232,9 +232,9 @@ class NSModel(Model):
 
         Parameters
         :param method: NSMethod object to uniformly assign to each NSAgent object initially
-        :param network: nx.Graph object model is based on
-        :param n_agents: number of NSAgent objects to add to schedule
-        :param start_node: - node where all NSAgent objects initially reside
+        :param network: networkx.Graph object model is based on
+        :param n_agents: Number of NSAgent objects to add to schedule
+        :param start_node: Node where all NSAgent objects initially reside
         :return: None
         """
         super().__init__()
@@ -252,12 +252,44 @@ class NSModel(Model):
             del self
 
         # Building up network for model
+        self.__method = method
         self.__network = network
         self.__start_node = start_node
         self.schedule = SimultaneousActivation(model=self)
         for ID in np.arange(n_agents):
             a = NSAgent(unique_id=ID, model=self, node=start_node, method=method)
             self.schedule.add(agent=a)
+
+    @property
+    def method(self) -> NSMethod:
+        """
+        Gets network sampling method with parameter values as NSMethod object
+
+        :return: Current NSMethod object assigned to each agent in the model
+        """
+        return self.__method
+
+    @method.setter
+    def method(self, new_method: NSMethod) -> None:
+        """
+        Sets new networks sampling method and parameter values
+
+        Parameters
+        :param new_method: New network sampling method as NSMethod object for replacement
+        :return: None
+        """
+        # Checking for valid NSMethod object
+        try:
+            if new_method is None:
+                raise TypeError('new_method cannot be None')
+            if type(new_method) != NSMethod:
+                raise TypeError('new_method must be of type NSMethod')
+        except TypeError as error:
+            print(str(error))
+            return
+        self.__method = new_method
+        for agent in self.schedule.agent_buffer(shuffled=False):
+            agent.method = new_method
 
     @property
     def network(self) -> nx.Graph:
@@ -277,6 +309,13 @@ class NSModel(Model):
         :param new_network: new networkx graph for NSAgent objects to traverse through as model
         :return: None
         """
+        # Checking for valid NetworkX Graph
+        try:
+            if type(new_network) != nx.Graph:
+                raise TypeError('new_network must be of type networkx.Graph')
+        except TypeError as error:
+            print(str(error))
+            return
         self.__network = new_network
 
     @property
@@ -306,6 +345,7 @@ class NSModel(Model):
         :param new_start_node: Replacement for current starting node
         :return: None
         """
+        # Checking for valid new start node
         try:
             if new_start_node not in self.network.nodes:
                 raise ValueError('new_start_node is not in current network')
@@ -317,7 +357,7 @@ class NSModel(Model):
     # ACESSORS
     def get_visited_nodes(self) -> np.ndarray:
         """
-        Gets array of unique visited nodes
+        Gets numpy array of unique visited nodes
 
         :return: Numpy array of visited nodes
         """
@@ -328,7 +368,11 @@ class NSModel(Model):
         return np.asarray(a=list(visited_nodes))
 
     def get_visited_edges(self) -> np.ndarray:
-        """Gets array of unique visited edges"""
+        """
+        Gets numpy array of unique visited edges
+
+        :return: Numpy array of visited edges
+        """
         visited_edges = set()
         for agent in self.schedule.agent_buffer(shuffled=False):
             vn = agent.get_visited_nodes()
@@ -337,27 +381,23 @@ class NSModel(Model):
         return np.asarray(a=list(visited_edges))
 
     # MUTATORS
-    def reset(self, method: NSMethod = None) -> None:
+    def reset(self) -> None:
         """
         Resets all NSAgents back to start_node with cleared visit history
 
-        Parameters
-        :param method: potentially new networks sampling method to use; otherwise, None indicates no change
         :return: None
         """
         for agent in self.schedule.agent_buffer(shuffled=False):
             agent.clear_visited_nodes()
             agent.node = self.__start_node
-            if method is not None:
-                agent.method = method
 
     def step(self, n_steps: int, func: Callable = None, params: Dict[str, Any] = None) -> None:
         """
         Activates model to run n steps for each NSAgent
 
         Parameters
-        :param n_steps: number of steps for each NSAgent to step through
-        :param func: intermittent function called after advancing each step
+        :param n_steps: Number of steps for each NSAgent to step through
+        :param func: Intermittent function called after advancing each step
         :param params: Parameter values to be passed in for func
         :return: None
         """
