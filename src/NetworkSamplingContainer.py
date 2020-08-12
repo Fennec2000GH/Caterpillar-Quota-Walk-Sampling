@@ -123,7 +123,7 @@ class NSContainer:
         # Checking for valid func and params
         try:
             if func is None:
-                raise TypeError('funccannot be None')
+                raise TypeError('func cannot be None')
             if 'agent' not in params:
                 raise ValueError('"agent" must be a key in params')
         except (TypeError, ValueError) as error:

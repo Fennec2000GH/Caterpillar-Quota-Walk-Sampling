@@ -1,10 +1,12 @@
 
 from __future__ import annotations
 from inspect import signature
+
 from mesa import Agent, Model
 from mesa.time import BaseScheduler, SimultaneousActivation
 import networkx as nx
 import numpy as np
+import param
 from typing import Any, Callable, Dict, NamedTuple
 
 
@@ -26,32 +28,40 @@ class NSMethod(NamedTuple):
     func: Callable
     params: Dict[str, Any]
 
-
 class NSAgent(Agent):
     """Agent integrated with networkx"""
 
-    def __init__(self, unique_id: int, model: NSModel, node, method: NSMethod) -> None:
+    def __init__(self, unique_id: int, model: NSModel, node: Any, method: NSMethod) -> None:
         """
         Initializes required attributes under Agent
 
         Parameters
-        :param unique_id: - unique id inherited from mesa.Agent
-        :param model: - model inherited from mesa.Model
-        :param node: - current node NSAgent is occupying in model
+        :param unique_id: Unique id inherited from mesa.Agent
+        :param model: Model inherited from mesa.Model
+        :param node: Current node NSAgent is occupying in model
         :return: None
         """
-        super().__init__(unique_id=unique_id, model=model)
+        # Checking for valid arguments
         try:
+            if type(unique_id) != int:
+                raise TypeError('unique_id must be of type int')
+            if not isinstance(model, NSModel):
+                raise TypeError('model must be of type NSModel')
             if node not in model.network.nodes:
                 raise ValueError('node not in model\'s network')
-        except ValueError as error:
+            if not isinstance(method, NSMethod):
+                raise TypeError('method must be of type NSMethod')
+        except (TypeError, ValueError) as error:
             print(str(error))
             del self
-        self.__active = True
-        self.__extra_properties = Dict[str, Any]
+
+        super().__init__(unique_id=unique_id, model=model)
+
+        self.__active = param.Boolean(bool=True, doc='Whether the NSAgent can still respond to step function next time')
+        self.__extra_properties = param.Dict(default=dict(), doc='Extra properties associated with the NSAgent')
         self.__method = method
         self.__node = node
-        self.__visited_nodes = np.asarray(a=[node])
+        self.__visited_nodes = param.Array(default=np.asarray(a=[node]), doc='Collects visited nodes when sampling')
 
     @property
     def active(self) -> bool:
@@ -68,13 +78,13 @@ class NSAgent(Agent):
         Set active state
 
         Parameters
-        :param state: - boolean indicating whether this NSAgent is active or not
+        :param state: Whether this NSAgent is active or not
         :return: None
         """
         self.__active = state
 
     @property
-    def extra_properties(self) -> Dict[str, Any]:
+    def extra_properties(self) -> dict:
         """
         Get entire dict of extra properties
 
@@ -91,6 +101,15 @@ class NSAgent(Agent):
         :param new_extra_properties: Replacement for current dict of extra properties
         :return: None
         """
+        # Checking for valid argument
+        try:
+            if type(new_extra_properties) != dict:
+                raise TypeError('new_extra_properties must be of type dict')
+            if not all([type(key) == str for key in new_extra_properties.keys()]):
+                raise TypeError('keys in new_extra_properties must be of type str')
+        except TypeError as error:
+            print(str(error))
+            return
         self.__extra_properties = new_extra_properties
 
     @property
@@ -149,22 +168,45 @@ class NSAgent(Agent):
             return
         self.__node = new_node
 
-    # ACCESSORS
-    def get_network(self) -> nx.Graph:
-        """Gets Networkx object, ie the network to be used in the model"""
+    @property
+    def network(self) -> nx.Graph:
+        """
+        Gets Networkx object, ie the network to be used in the model
+
+        :return: Networkx graph of model
+        """
         return self.model.network
 
+    # ACCESSORS
     def get_extra_property(self, extra_property_name: str, default: Any = None) -> Any:
-        """Gets value associated with extra property"""
+        """
+        Gets value associated with extra property
+
+        Parameters
+        :param extra_property_name: Name corresponding to key of new extra property
+        :param default: Value to return if extra_property_name does not exist in keys
+        :return: Value associated with extra_property_name key, if exists as an extra property
+        """
         return self.__extra_properties.get(extra_property_name, default)
 
     def get_visited_nodes(self) -> np.ndarray:
         """
-        Array of visited nodes
+        Gets numpy array of visited nodes
 
         :return: Numpy array of visited nodes by NSAgent during sampling run
         """
         return self.__visited_nodes
+
+    def get_visited_edges(self) -> np.ndarray:
+        """
+        Gets numpy array of visited edges
+
+        :return: Numpy array of visited edges traversed by NSAgent during sampling run
+        """
+        vn = self.__visited_nodes
+        if vn.size <= 1:
+            return np.empty(shape=(0,), dtype=tuple)
+        return np.asarray(a=[(vn[i], vn[i + 1]) for i in np.arange(vn.size - 1)], dtype=tuple)
 
     # MUTATORS
     def set_extra_property(self, key: str, value: Any) -> None:
@@ -391,7 +433,7 @@ class NSModel(Model):
             agent.clear_visited_nodes()
             agent.node = self.__start_node
 
-    def step(self, n_steps: int, func: Callable = None, params: Dict[str, Any] = None) -> None:
+    def step(self, n_steps: int, func: Callable = None, params: Dict[str, Any] = dict()) -> None:
         """
         Activates model to run n steps for each NSAgent
 

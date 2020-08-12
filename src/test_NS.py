@@ -1,10 +1,30 @@
 
+import matplotlib.pyplot as plt
 import networkx as nx
 import pytest
 
 from NetworkSampling import NSMethod, NSModel
 from NetworkSamplingContainer import NSContainer
-from NetworkSamplingFunctions import random_walk
+from NetworkSamplingFunctions import random_walk, forest_fire, snowball, caterpillar_quota_walk
+
+# NSMethod
+@pytest.mark.NSMethod
+def test_NSMethod() -> None:
+    """
+    Tests instantiation of NSMethod
+
+    :return: None
+    """
+
+    nsmethod_random_walk = NSMethod(func=random_walk, params={})
+
+
+
+
+@pytest.mark
+
+
+
 
 # NSContainer
 @pytest.mark.NSContainer
