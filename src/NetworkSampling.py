@@ -1,451 +1,175 @@
 
 from __future__ import annotations
+import copy
 from inspect import signature
-
-from mesa import Agent, Model
-from mesa.time import BaseScheduler, SimultaneousActivation
+from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
+import multiprocessing as mp
 import networkx as nx
 import numpy as np
 import param
-from typing import Any, Callable, Dict, NamedTuple
+import pandas as pd
+import pdb
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Tuple, Union
 
+# FuncIterable = Iterable[Tuple[Callable, Dict[str, Any]]]
 
+# NS = Network Sampling
 class NSMethod(NamedTuple):
-    """
-    Model for network sampling method
+    """Convenient container to hold any function and its parameters as a dict separately, facilitating destructuring later.
 
-    Fields
-    :param func: Callable or function that must take in at last 'agent' as a parameter, and the return
-    value(s) must be 3-element tuple of format (next_node, next_method: NSMethod, pause: Boolean).
-    These fields provide the next node in the model's network for this agent to travel to, a
-    possible change in network sampling method for next turn, and whether to pause any further 
-    activity of this agent, respectively.
-
-    :param params: The parameters and corresponding values to properly execute the provided network
-    sampling method. The word 'agent' must be in the keys, and the preset value is preferably
-    None. Type must be dict of {str: object} KV pairs.
+    Args:
+        func (Callable): A callable that takes in at least 1 parameter
+        params (Dict[str, Any]): Specific parameter values as a dict
     """
     func: Callable
     params: Dict[str, Any]
 
-class NSAgent(Agent):
-    """Agent integrated with networkx"""
+class NetworkSampler:
+    """Light-weight, high-level framework used to sample networks with a given algorithm and evalutate the sample according to a given metric."""
 
-    def __init__(self, unique_id: int, model: NSModel, node: Any, method: NSMethod) -> None:
+    # METHODS
+    def __init__(self, sampler: object, scorer: NSMethod) -> None:
+        """Initializes the smapling algorithm and evalutation metric.
+
+        Args:
+            sampler (object): Either a sampler instance from littleballoffur library or a custom-made instance with compatible structure
+            scorer (NSMethod): Function and parameters of scoring metric to evaluate network sample
+
+        Returns:
+            # None
         """
-        Initializes required attributes under Agent
+        if(not hasattr(sampler, 'sample')):
+            raise ValueError('Sampler does not have a \'sample\' callable')
 
-        Parameters
-        :param unique_id: Unique id inherited from mesa.Agent
-        :param model: Model inherited from mesa.Model
-        :param node: Current node NSAgent is occupying in model
-        :return: None
-        """
-        # Checking for valid arguments
-        try:
-            if type(unique_id) != int:
-                raise TypeError('unique_id must be of type int')
-            if not isinstance(model, NSModel):
-                raise TypeError('model must be of type NSModel')
-            if node not in model.network.nodes:
-                raise ValueError('node not in model\'s network')
-            if not isinstance(method, NSMethod):
-                raise TypeError('method must be of type NSMethod')
-        except (TypeError, ValueError) as error:
-            print(str(error))
-            del self
-
-        super().__init__(unique_id=unique_id, model=model)
-
-        self.__active = param.Boolean(bool=True, doc='Whether the NSAgent can still respond to step function next time')
-        self.__extra_properties = param.Dict(default=dict(), doc='Extra properties associated with the NSAgent')
-        self.__method = method
-        self.__node = node
-        self.__visited_nodes = param.Array(default=np.asarray(a=[node]), doc='Collects visited nodes when sampling')
-
-    @property
-    def active(self) -> bool:
-        """
-        Indicate whether this NSAgent is active each iteration or paused
-
-        :return: Whether NSAgent has abn active step function
-        """
-        return self.__active
-
-    @active.setter
-    def active(self, state: bool) -> None:
-        """
-        Set active state
-
-        Parameters
-        :param state: Whether this NSAgent is active or not
-        :return: None
-        """
-        self.__active = state
-
-    @property
-    def extra_properties(self) -> dict:
-        """
-        Get entire dict of extra properties
-
-        :return: Dict of extra properties for NSAgent
-        """
-        return self.__extra_properties
-
-    @extra_properties.setter
-    def extra_properties(self, new_extra_properties: Dict[str, Any]) -> None:
-        """
-        Resets extra properties entirely to another dict
-
-        Parameters:
-        :param new_extra_properties: Replacement for current dict of extra properties
-        :return: None
-        """
-        # Checking for valid argument
-        try:
-            if type(new_extra_properties) != dict:
-                raise TypeError('new_extra_properties must be of type dict')
-            if not all([type(key) == str for key in new_extra_properties.keys()]):
-                raise TypeError('keys in new_extra_properties must be of type str')
-        except TypeError as error:
-            print(str(error))
-            return
-        self.__extra_properties = new_extra_properties
-
-    @property
-    def method(self) -> NSMethod:
-        """
-        Get network sampling method employed at each step of ABM
-
-        :return: NSMethod named tuple holding model's current network sampling method
-        """
-        return self.__method
-
-    @method.setter
-    def method(self, new_method: NSMethod) -> None:
-        """
-        Sets new algorithm / smapling method for agent
-
-        Parameters:
-        :param new_method: Replacement for current NSMethod object used as model's network sampling method
-        :return: None
-        """
-        # Error checking for correct function signature
-        sig = signature(new_method.func)
-        try:
-            if len(sig.parameters) == 0:
-                raise ValueError('new_method must have at least one parameter')
-            if 'agent' not in sig.parameters or 'agent' not in new_method.params:
-                raise ValueError('"agent" must be a parameter name')
-        except ValueError as error:
-            print(error)
-            return
-        self.__method = new_method
-
-    @property
-    def node(self) -> Any:
-        """
-        Current node or vertex NSAgent owns
-        :return: Networkx node NSAgent is located over
-        """
-        return self.__node
-
-    @node.setter
-    def node(self, new_node) -> None:
-        """
-        Sets new node or vertex for NSAgent to own
-
-        Parameters
-        :param new_node: New node for current NSAgent object to be located at
-        :return: None
-        """
-        # Error checking for valid new node (existing in model) 
-        try:
-            if new_node not in self.get_network():
-                raise ValueError('new node must be present in current model\'s network')
-        except ValueError as error:
-            print(str(error))
-            return
-        self.__node = new_node
-
-    @property
-    def network(self) -> nx.Graph:
-        """
-        Gets Networkx object, ie the network to be used in the model
-
-        :return: Networkx graph of model
-        """
-        return self.model.network
-
-    # ACCESSORS
-    def get_extra_property(self, extra_property_name: str, default: Any = None) -> Any:
-        """
-        Gets value associated with extra property
-
-        Parameters
-        :param extra_property_name: Name corresponding to key of new extra property
-        :param default: Value to return if extra_property_name does not exist in keys
-        :return: Value associated with extra_property_name key, if exists as an extra property
-        """
-        return self.__extra_properties.get(extra_property_name, default)
-
-    def get_visited_nodes(self) -> np.ndarray:
-        """
-        Gets numpy array of visited nodes
-
-        :return: Numpy array of visited nodes by NSAgent during sampling run
-        """
-        return self.__visited_nodes
-
-    def get_visited_edges(self) -> np.ndarray:
-        """
-        Gets numpy array of visited edges
-
-        :return: Numpy array of visited edges traversed by NSAgent during sampling run
-        """
-        vn = self.__visited_nodes
-        if vn.size <= 1:
-            return np.empty(shape=(0,), dtype=tuple)
-        return np.asarray(a=[(vn[i], vn[i + 1]) for i in np.arange(vn.size - 1)], dtype=tuple)
+        self.sampler = sampler
+        self.scorer = scorer
+        self.prev_sample = None
 
     # MUTATORS
-    def set_extra_property(self, key: str, value: Any) -> None:
+    def sample(self, graph: nx.Graph, start_node: int=None) -> nx.Graph:
+        """Extracts subgraph from network by applying given sampling algorithm and parameters if provided.
+
+        Args:
+            graph (nx.Graph): Original graph or network to sample from
+            start_node (int, optional): Node where sampling starts to spread. Defaults to None.
+
+        Returns:
+            nx.Graph: Sampled network.
         """
-        Sets new extra property KV pair
+        self.prev_sample = self.sampler.sample(graph=graph, start_node=start_node)
+        return self.prev_sample
 
-        Parameters
-        :param key: the key
-        :param value: the corresponding value
-        :return: None
+    def score(self):
+        """Evaluates the sample network by the provided metric. Calling the 'sample' method must be done first before calling 'score'.
+
+        Returns:
+            float: Evaluation score using given scoring metric
         """
-        self.__extra_properties.update({key: value})
+        if self.prev_sample is None:
+            raise ValueError('No calls to \'sample\' method has been made yet.')
 
-    def set_many_extra_properties(self, **kwargs) -> None:
+        score_func, score_params = self.scorer.func, self.scorer.params
+        score_params['graph'] = self.prev_sample
+        return score_func(**score_params)
+
+    def sample_then_score(self, graph: nx.Graph, start_node: int=None):
+        """Scores network sampling algorithm with a fresh sample each time by automatically calling 'sample' first.
+
+        Args:
+            graph (nx.Graph): Original graph or network to sample from.
+            start_node (int, optional): Node where sampling starts to spread. Defaults to None.
+
+        Returns:
+            Tuple[float, nx.Graph]: Tuple of score and corresponding sample of network.
         """
-        Sets many extra properties simultaneously
+        self.sampler.sample(graph=graph, start_node=start_node)
+        return score()
 
-        Parameters
-        :param kwargs: Key-Value pairs to insert as new extra properties
-        :return: None
+
+class NetworkSamplerGrid:
+    """Compare and contrast different metrics of resulting samples from networks among different sampling algorithms."""
+    def __init__(self, graph_group: Iterable[nx.Graph], sampler_group: Iterable[Any], scorer_group: Iterable[NSMethod]):
+        """Initializes the group of sampling algorithms to compare using one or more scoring metrics.
+
+        Args:
+            graph_group (Iterable[nx.Graph]): One or more networks to sample and evaluate. Each graph having a 'name' attribute is recommended for later labeling in tables; if absent, label for a graph will be its 
+                                                0-based index in graph_group.
+            sampler_group (Any): One or more sampling algorithms to apply, either in the form of litleballoffur instances or a custom instance from NEtworkSamplerFunctions.py 
+            scorer_group (Iterable[NSMethod]): One or more scoring metrics to apply to the resulting sampled network using each given sampling algorithm. Each value in 'params' is a fixed constant.
+
+        Returns:
+            None:
         """
-        for key, value in kwargs.items():
-            self.set_extra_property(key=str(key), value=value)
+        pdb.set_trace(header='NetworkSamplerGrid - __init__ - Entering initializer')
 
-    def clear_extra_properties(self) -> None:
+        self.graph_group = [graph for graph in graph_group]
+        self.sampler_group = sampler_group
+        self.scorer_group = scorer_group
+
+        if __debug__:
+            print(f'Number of graphs: {len(self.graph_group)}')
+            print(f'Number of samplers: {len(self.sampler_group)}')
+            print(f'Number of scorers: {len(self.scorer_group)}')
+
+    def sample_by_graph(self, graph: nx.Graph, n_trials: int = 1, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
+        """Computes the accuracy
+
+        Args:
+            graph: Graph to sample
+            n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end score is a single value from aggregating the scores from all the 
+                                        trials. Defaults to 1.
+            score_finalizer (str, optional): String indicating how to arrive at the final score for an algorithm when evaluated with a specific scoring metric. Must be either 'mean' or 'median'. Defaults to 'mean'.
+            dir_path (str, optional): Path for directory holdin the pickled results of NetworkSamplerGrid. The extension at the end must be '.pkl'. If None, nothing will be stored in memory. Defaults to None.
+            n_jobs (int, optional): Number of jobs to divide sampling across all graphs with multiprocessing. Defaults to 1.
+
+        Returns:
+            Dict[pd.Dataframe]: A ditionary of Dataframes, each corresponding to a score report for the same scoring metric across all given graphs and network sampling algorithms. Each Dataframe applies distinct 
+                                network samples as rows and sampling algorithm names as columns.
         """
-        Empty out dict of extra properties
 
-        :return: None
+        pdb.set_trace(header='NetworkSamplerGrid - samply_by_graph - Entering function')
+        col_labels = [str(scorer.func) for scorer in self.scorer_group]
+        retval = pd.DataFrame(columns=col_labels)
+
+        pdb.set_trace(header='NetworkSamplerGrid - sample_by_graph - Sampling chose graph with each provided smapling algorithm')
+        for sampler in self.sampler_group:
+            if __debug__:
+                print(f'sampler: {sampler}')
+            row = list()
+            for scorer in self.scorer_group:
+                # Computing score / distribution
+                ns = NetworkSampler(sampler=sampler, scorer=scorer)
+                sample = ns.sample(graph=graph, start_node=...)
+                score_result = ns.scoree()
+                row.append(score_result)
+
+                # Drawing and saving sample
+                nx.draw(G=sample, pos=nx.spring_layout(G=sample))
+                plt.show(block=False)
+                plt.savefig(f'./Graph Plots/{str(sampler)}.jpg', format='JPG')
+
+            # Appends to dataframe new row of scores computed via different metrics in score_group
+            retval.append(other=pd.Series(data=row, index=col_labels))
+
+        return retval
+
+
+    def sample_stored_graphs(self, n_trials: Iterables[int]=None, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
         """
-        self.__extra_properties.clear()
+        Samples each given network during initialization and creates a dataframe with sampling algorithm as row and scoring metric as column. The collection of such dataframes
+        are stored into a dict, keyed by network name if it exists or the index of the network during class initialization.
 
-    def clear_visited_nodes(self) -> None:
+        Args:
+            n_trials (Iterable[int], optional): [description]. Defaults to None.
+            score_finalizer (str, optional): [description]. Defaults to 'mean'.
+            dir_path (str, optional): [description]. Defaults to None.
+            n_jobs (int, optional): [description]. Defaults to 1.
+
+        Returns:
+            dict[pd.DataFrame]: Dictionary ofdataframes, each being a scoreboard across all given sampling algorithms measured with all given scoring metrics for each network
         """
-        Clears history of visited nodes
-
-        :return: None
-        """
-        self.__visited_nodes.clear()
-
-    def step(self) -> None:
-        """
-        What the agent does at each step of ABM
-
-        :return: None
-        """
-        # Returns new node(s) and possibly a new algorithm for next time
-        # For the second returned value, the algorithm stays the same if True is returned
-        # Otherwise if False, the agent stops any more actions and pauses from then on
-        if self.__active:
-            func = self.__method.func
-            params = self.__method.params
-            params['agent'] = self
-            params['self'] = func
-            func(**params)
-
-
-# NS = Network Sampling
-class NSModel(Model):
-    """Model integrated with networkx and base class for random walks"""
-
-    def __init__(self, method: NSMethod, network: nx.Graph, n_agents: int, start_node: Any) -> None:
-        """
-        Initializes base network
-
-        Parameters
-        :param method: NSMethod object to uniformly assign to each NSAgent object initially
-        :param network: networkx.Graph object model is based on
-        :param n_agents: Number of NSAgent objects to add to schedule
-        :param start_node: Node where all NSAgent objects initially reside
-        :return: None
-        """
-        super().__init__()
-
-        # Checking for non-empty graph with nodes
-        try:
-            if nx.is_empty(G=network):
-                raise ValueError('network does not contain any nodes')
-            if n_agents < 0:
-                raise ValueError('number of agents cannot be negative')
-            if start_node not in network.nodes:
-                raise ValueError('start node is not in network')
-        except ValueError as error:
-            print(str(error))
-            del self
-
-        # Building up network for model
-        self.__method = method
-        self.__network = network
-        self.__start_node = start_node
-        self.schedule = SimultaneousActivation(model=self)
-        for ID in np.arange(n_agents):
-            a = NSAgent(unique_id=ID, model=self, node=start_node, method=method)
-            self.schedule.add(agent=a)
-
-    @property
-    def method(self) -> NSMethod:
-        """
-        Gets network sampling method with parameter values as NSMethod object
-
-        :return: Current NSMethod object assigned to each agent in the model
-        """
-        return self.__method
-
-    @method.setter
-    def method(self, new_method: NSMethod) -> None:
-        """
-        Sets new networks sampling method and parameter values
-
-        Parameters
-        :param new_method: New network sampling method as NSMethod object for replacement
-        :return: None
-        """
-        # Checking for valid NSMethod object
-        try:
-            if new_method is None:
-                raise TypeError('new_method cannot be None')
-            if type(new_method) != NSMethod:
-                raise TypeError('new_method must be of type NSMethod')
-        except TypeError as error:
-            print(str(error))
-            return
-        self.__method = new_method
-        for agent in self.schedule.agent_buffer(shuffled=False):
-            agent.method = new_method
-
-    @property
-    def network(self) -> nx.Graph:
-        """
-        Base network holding the model
-
-        :return: Networkx graph object that the model currently uses
-        """
-        return self.__network
-
-    @network.setter
-    def network(self, new_network: nx.Graph) -> None:
-        """
-        Sets new network for model
-
-        Parameters
-        :param new_network: new networkx graph for NSAgent objects to traverse through as model
-        :return: None
-        """
-        # Checking for valid NetworkX Graph
-        try:
-            if type(new_network) != nx.Graph:
-                raise TypeError('new_network must be of type networkx.Graph')
-        except TypeError as error:
-            print(str(error))
-            return
-        self.__network = new_network
-
-    @property
-    def number_of_agents(self) -> int:
-        """
-        Count of NSAgents used by the model
-
-        :return: None
-        """
-        return len(self.schedule.agents)
-
-    @property
-    def start_node(self) -> Any:
-        """
-        Gets initialized node that all agents start at
-
-        :return: Node that all NSAgents initially spawn at
-        """
-        return self.__start_node
-
-    @start_node.setter
-    def start_node(self, new_start_node) -> None:
-        """
-        Resets start node for model
-
-        Parameters:
-        :param new_start_node: Replacement for current starting node
-        :return: None
-        """
-        # Checking for valid new start node
-        try:
-            if new_start_node not in self.network.nodes:
-                raise ValueError('new_start_node is not in current network')
-        except ValueError as error:
-            print(str(error))
-            return
-        self.__start_node = new_start_node
-
-    # ACESSORS
-    def get_visited_nodes(self) -> np.ndarray:
-        """
-        Gets numpy array of unique visited nodes
-
-        :return: Numpy array of visited nodes
-        """
-        visited_nodes = set()
-        for agent in self.schedule.agent_buffer(shuffled=False):
-            for n in agent.get_visited_nodes():
-                visited_nodes.add(n)
-        return np.asarray(a=list(visited_nodes))
-
-    def get_visited_edges(self) -> np.ndarray:
-        """
-        Gets numpy array of unique visited edges
-
-        :return: Numpy array of visited edges
-        """
-        visited_edges = set()
-        for agent in self.schedule.agent_buffer(shuffled=False):
-            vn = agent.get_visited_nodes()
-            for index in np.arange(0, vn.size - 1):
-                visited_edges.add((vn[index], vn[index + 1]))
-        return np.asarray(a=list(visited_edges))
-
-    # MUTATORS
-    def reset(self) -> None:
-        """
-        Resets all NSAgents back to start_node with cleared visit history
-
-        :return: None
-        """
-        for agent in self.schedule.agent_buffer(shuffled=False):
-            agent.clear_visited_nodes()
-            agent.node = self.__start_node
-
-    def step(self, n_steps: int, func: Callable = None, params: Dict[str, Any] = dict()) -> None:
-        """
-        Activates model to run n steps for each NSAgent
-
-        Parameters
-        :param n_steps: Number of steps for each NSAgent to step through
-        :param func: Intermittent function called after advancing each step
-        :param params: Parameter values to be passed in for func
-        :return: None
-        """
-        for _ in np.arange(n_steps):
-            self.schedule.step()
-
-            # Executing potential intermittent function
-            if func is not None:
-                func(**params)
+        retval = dict()
+        for index, graph in enumerate(self.graph_group):
+            retval[graph['name'] if 'name' in graph else str(index)] = sample_by_graph(graph=graph, n_trials=n_trials[index], score_finalizer=score_finalizer, n_jobs=n_jobs)
+        return retval
