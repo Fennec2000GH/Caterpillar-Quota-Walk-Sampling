@@ -1,5 +1,10 @@
 
-from __future__ import annotations
+
+from littleballoffur.exploration_sampling import (RandomWalkSampler,
+                                                commonneighborawarerandomwalksampler,
+                                                SnowBallSampler,
+                                                CommunityStructureExpansionSampler,
+                                                FrontierSampler)
 import copy
 from inspect import signature
 from joblib import Parallel, delayed
@@ -9,10 +14,10 @@ import networkx as nx
 import numpy as np
 import param
 import pandas as pd
-import pdb
-from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Tuple, Union
+# import pdb
+# pdb.disable()
+from typing import *
 
-# FuncIterable = Iterable[Tuple[Callable, Dict[str, Any]]]
 
 # NS = Network Sampling
 class NSMethod(NamedTuple):
@@ -27,28 +32,133 @@ class NSMethod(NamedTuple):
 
 class NetworkSampler:
     """Light-weight, high-level framework used to sample networks with a given algorithm and evalutate the sample according to a given metric."""
-
     # METHODS
-    def __init__(self, sampler: object, scorer: NSMethod) -> None:
-        """Initializes the smapling algorithm and evalutation metric.
+    def __init__(self, sampler: Any, scorer: NSMethod) -> None:
+        """
+        Initializes the smapling algorithm and evalutation metric.
 
         Args:
-            sampler (object): Either a sampler instance from littleballoffur library or a custom-made instance with compatible structure
+            sampler (Any): Either a sampler instance from littleballoffur library or a custom-made instance with compatible structure
             scorer (NSMethod): Function and parameters of scoring metric to evaluate network sample
 
         Returns:
-            # None
+            None: Does not return anything
         """
+        # pdb.set_trace(header='NetworkSampler - __init__ - Initializing sampler and scorer')
         if(not hasattr(sampler, 'sample')):
             raise ValueError('Sampler does not have a \'sample\' callable')
 
         self.sampler = sampler
         self.scorer = scorer
         self.prev_sample = None
+        if __debug__:
+            print(f'sampler: {self.sampler}')
+            print(f'scorer: {self.scorer}')
+
+    #ACCESSORS
+#region
+    # @property
+    # def sampler(self):
+    #     """
+    #     Gets current sampler object
+
+    #     Returns:
+    #         Any: Returns currently used sampler object
+    #     """
+    #     return self.sampler
+#endregion
+
+    # @sampler.setter
+    def set_sampler(self, new_sampler: Any):
+        """
+        Resets sampler object.
+
+        Args:
+            new_sampler (Any): New sampler object to replace current sampler
+
+        Raises:
+            ValueError: New sampler object lacks 'sample' method or the 'sample' method lacks the paramters ['graph', 'start_node']
+
+        Returns:
+            None: None
+        """
+        if not hasattr(new_sampler, 'sample'):
+            raise ValueError('Sampler object must have \'sample\' method.')
+        _sample = getattr(new_sampler, 'sample')
+        sig = signature(_sample)
+        if 'graph' not in sig.parameters:
+            raise ValueError('\'graph\' is not a parameter in \'sample\' method of new sampler')
+        if 'start_node' not in sig.parameters:
+            raise ValueError('\'start_node\' is not a parameter in \'sample\' method of new sampler')
+
+        self.sampler = new_sampler
+
+#region
+    # @property
+    # def scorer(self):
+    #     """
+    #     Gets current scorer object.
+
+    #     Returns:
+    #         NSMethod: Returns currently used scoring metric and its parameters
+    #     """
+    #     return self.scorer
+#endregion
+
+    def set_scorer(self, new_scorer: NSMethod):
+        """
+        Resets scorer object.
+
+        Args:
+            new_scorer (NSMethod): New scorer object to replace current scorer.
+
+        Raises:
+            TypeError: new_scorer is not of type NSMethod
+            ValueError: 'graph'  is not a parameter in specific method for scoring
+
+        Returns:
+            None: None
+        """
+        if type(new_scorer) != NSMethod:
+            raise TypeError('New scorer object is not of type NSMethod')
+        sig = signature(new_scorer.func)
+        if 'graph' not in sig.parameters:
+            raise ValueError('\'graph\' is not a parameter in specific method for scoring')
+
+        self.scorer = new_scorer
+
+    # def tune_single(self, graph: nx.Graph, param_name: str, param_values: Union[Iterable[float], Tuple[float, float]]):
+    #     """[summary]
+
+    #     Args:
+    #         graph (nx.Graph): [description]
+    #         param_name (str): [description]
+    #         param_values (Union[Iterable[float], Tuple[float, float]]): [description]
+    #     """
+    #     pass
+
+    # def tune_multiple(self, graph: nx.Graph, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], n_iter=10, no_improve: int=None):
+    #     """
+    #     Optimize the current sampler for a specific network to sample, given a dictionary 
+
+    #     Args:
+    #         graph (nx.Graph): [description]
+    #         params (Dict[str, Union[Iterable[float], Tuple[float, float]]]): [description]
+    #         n_iter (int, optional): [description]. Defaults to 10.
+    #         no_improve (int, optional): [description]. Defaults to None.
+
+    #     Raises:
+    #         ValueError: [description]
+
+    #     Returns:
+    #         [type]: [description]
+    #     """
+    #     pass
 
     # MUTATORS
     def sample(self, graph: nx.Graph, start_node: int=None) -> nx.Graph:
-        """Extracts subgraph from network by applying given sampling algorithm and parameters if provided.
+        """
+        Extracts subgraph from network by applying given sampling algorithm and parameters if provided.
 
         Args:
             graph (nx.Graph): Original graph or network to sample from
@@ -57,6 +167,20 @@ class NetworkSampler:
         Returns:
             nx.Graph: Sampled network.
         """
+        # pdb.set_trace(header='NetworkSampler - sample - Entering sample')
+        if __debug__:
+            print('sampler attributes:\n')
+            print(dir(self.sampler))
+
+        _sample = getattr(self.sampler, 'sample')
+        if __debug__:
+            print('_sample attributes:\n')
+            print(dir(_sample))
+            sig = signature(_sample)
+            print(f'_sample signature: {sig}')
+            print(f'_sample parameters: {sig.parameters}')
+            print(f'_sample_return_annotation: {sig.return_annotation}')
+
         self.prev_sample = self.sampler.sample(graph=graph, start_node=start_node)
         return self.prev_sample
 
@@ -66,109 +190,167 @@ class NetworkSampler:
         Returns:
             float: Evaluation score using given scoring metric
         """
+        # pdb.set_trace(header='NetworkSampler - score - Entering score')
         if self.prev_sample is None:
             raise ValueError('No calls to \'sample\' method has been made yet.')
 
         score_func, score_params = self.scorer.func, self.scorer.params
-        score_params['graph'] = self.prev_sample
-        return score_func(**score_params)
+        return score_func(graph=self.prev_sample, **score_params)
 
-    def sample_then_score(self, graph: nx.Graph, start_node: int=None):
+    def sample_and_score(self, graph: nx.Graph, start_node: int=None):
         """Scores network sampling algorithm with a fresh sample each time by automatically calling 'sample' first.
 
         Args:
-            graph (nx.Graph): Original graph or network to sample from.
+            graph (nx.Graph): Network to sample from.
             start_node (int, optional): Node where sampling starts to spread. Defaults to None.
 
         Returns:
             Tuple[float, nx.Graph]: Tuple of score and corresponding sample of network.
         """
-        self.sampler.sample(graph=graph, start_node=start_node)
-        return score()
+        # pdb.set_trace(header='NetworkSampler - sample_and_score - Entering sample_and_score')
+        sample_result = self.sampler.sample(graph=graph, start_node=start_node)
+        score_result = score()
 
+        if __debug__:
+            print(f'sample_result: {sample_result}')
+            print(f'score_result: {score_result}')
+
+        return sample_result, score_result
 
 class NetworkSamplerGrid:
     """Compare and contrast different metrics of resulting samples from networks among different sampling algorithms."""
-    def __init__(self, graph_group: Iterable[nx.Graph], sampler_group: Iterable[Any], scorer_group: Iterable[NSMethod]):
+    # METHODS
+    def __init__(self, graph_group: Iterable[nx.Graph], sampler_group: Iterable[Any], scorer_group: Iterable[NSMethod], sampler_names: Iterable[str]=None, scorer_names: Iterable[str]=None):
         """Initializes the group of sampling algorithms to compare using one or more scoring metrics.
 
         Args:
             graph_group (Iterable[nx.Graph]): One or more networks to sample and evaluate. Each graph having a 'name' attribute is recommended for later labeling in tables; if absent, label for a graph will be its 
                                                 0-based index in graph_group.
-            sampler_group (Any): One or more sampling algorithms to apply, either in the form of litleballoffur instances or a custom instance from NEtworkSamplerFunctions.py 
+            sampler_group (Iterable[Any]): One or more sampling algorithms to apply, either in the form of litleballoffur instances or a custom instance from NEtworkSamplerFunctions.py 
             scorer_group (Iterable[NSMethod]): One or more scoring metrics to apply to the resulting sampled network using each given sampling algorithm. Each value in 'params' is a fixed constant.
+            sampler_group (Iterable[str]): Collection of string names for each sampler in sampler_group to be used as row labels (indexes); str() value of scroer will be used instead if None. Defaults to None.
+            scorer_names (Iterable[str]): Collection of string names for each scorer in scorer_group to be used as column labels; str() value of scroer will be used instead if None. Defaults to None.
+
+        Raises:
+            ValueError: The number of names designated for scorers does not equal the number of scorers in scorer_group
 
         Returns:
             None:
         """
-        pdb.set_trace(header='NetworkSamplerGrid - __init__ - Entering initializer')
+        # pdb.set_trace(header='NetworkSamplerGrid - __init__ - Entering initializer')
 
-        self.graph_group = [graph for graph in graph_group]
+        if len(scorer_names) != len(scorer_group):
+            raise ValueError('The number of names designated for scorers does not equal the number of scorers in scorer_group.')
+
+        self.graph_group = graph_group
         self.sampler_group = sampler_group
+        self.sampler_names = sampler_names
         self.scorer_group = scorer_group
+        self.scorer_names = scorer_names
 
         if __debug__:
             print(f'Number of graphs: {len(self.graph_group)}')
             print(f'Number of samplers: {len(self.sampler_group)}')
             print(f'Number of scorers: {len(self.scorer_group)}')
 
-    def sample_by_graph(self, graph: nx.Graph, n_trials: int = 1, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
-        """Computes the accuracy
+    def _rescore(self, ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
+        """
+        Internal function to be used by sample_by_graph. Essentially, a re-sampling followed by an immediate re-scoring is completed.
+
+        Args:
+            ns (NetworkSampler): Network sampler to use
+            graph (nx.Graph): Network to sample from
+            start_node (int, optional): Starting node. Defaults to None.
+        """
+        ns.sample(graph, start_node)
+        return ns.score()
+
+    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, n_trials: int = 1, aggregate: Callable=np.mean, dir_path: str = None, n_jobs: int = mp.cpu_count()):
+        """
+        Computes the accuracy
 
         Args:
             graph: Graph to sample
+            start_node (int, optional): Node where sampling starts to spread. Defaults to None.
             n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end score is a single value from aggregating the scores from all the 
                                         trials. Defaults to 1.
-            score_finalizer (str, optional): String indicating how to arrive at the final score for an algorithm when evaluated with a specific scoring metric. Must be either 'mean' or 'median'. Defaults to 'mean'.
+            aggregate (Callable, optional): Aggregation function over n_trials itrals for a specific scoring metric. Must take in an iterable as first parameter. Defaults to np.mean.
             dir_path (str, optional): Path for directory holdin the pickled results of NetworkSamplerGrid. The extension at the end must be '.pkl'. If None, nothing will be stored in memory. Defaults to None.
             n_jobs (int, optional): Number of jobs to divide sampling across all graphs with multiprocessing. Defaults to 1.
 
         Returns:
-            Dict[pd.Dataframe]: A ditionary of Dataframes, each corresponding to a score report for the same scoring metric across all given graphs and network sampling algorithms. Each Dataframe applies distinct 
-                                network samples as rows and sampling algorithm names as columns.
+            Tuple[nx.Graph, pd.DataFrame]: The network sample, and a dataframe with sampling algorithm as rows and scores / other data generated by specified metrics as columns, and 
         """
 
-        pdb.set_trace(header='NetworkSamplerGrid - samply_by_graph - Entering function')
-        col_labels = [str(scorer.func) for scorer in self.scorer_group]
-        retval = pd.DataFrame(columns=col_labels)
+        # pdb.set_trace(header='NetworkSamplerGrid - samply_by_graph - Entering function')
+        pool = mp.Pool(processes=16)
+        graph_name = graph['name'] if 'name' in graph else str(graph)
+        sample_result = None
+        row_labels = [str(sampler) for sampler in self.sampler_group] if self.sampler_names is None else self.sampler_names # indexes for dataframe df
+        col_labels = [str(scorer) for scorer in self.scorer_group] if self.scorer_names is None else self.scorer_names
+        score_dict = dict()
+        for col_name in self.scorer_names:
+            score_dict.update({col_name:list()})
 
-        pdb.set_trace(header='NetworkSamplerGrid - sample_by_graph - Sampling chose graph with each provided smapling algorithm')
-        for sampler in self.sampler_group:
+        if __debug__:
+            print(f'row_labels: {row_labels}')
+            print(f'col_labels: {col_labels}')
+            print(f'initial score_dict:\n{score_dict}')
+
+        # pdb.set_trace(header='NetworkSamplerGrid - sample_by_graph - Sampling chose graph with each provided sampling algorithm')
+        for row_label, sampler in zip(row_labels, self.sampler_group):
             if __debug__:
-                print(f'sampler: {sampler}')
-            row = list()
-            for scorer in self.scorer_group:
+                print(f'sampler: {row_label}')
+
+            # Initializing sampler and sampling
+            ns = NetworkSampler(sampler=sampler, scorer=None)
+            sample_result = ns.sample(graph=graph, start_node=start_node)
+
+            # Drawing and saving sample
+            nx.draw(G=sample_result, pos=nx.spring_layout(G=sample_result))
+            plt.show(block=False)
+            plt.savefig(f'./Graph Plots/{graph_name}_{row_label}.jpg', format='JPG')
+
+            for col_label, scorer in zip(col_labels, self.scorer_group):
                 # Computing score / distribution
-                ns = NetworkSampler(sampler=sampler, scorer=scorer)
-                sample = ns.sample(graph=graph, start_node=...)
-                score_result = ns.scoree()
-                row.append(score_result)
+                ns.set_scorer(new_scorer=scorer)
+                score_list = list()  # temporary use to hold scores across trials for the same  (sampler, scorer) pair
 
-                # Drawing and saving sample
-                nx.draw(G=sample, pos=nx.spring_layout(G=sample))
-                plt.show(block=False)
-                plt.savefig(f'./Graph Plots/{str(sampler)}.jpg', format='JPG')
+                try:
+                    score_list = pool.starmap(self._rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)])
+                except:
+                    for _ in np.arange(n_trials):
+                        ns.sample(graph=graph, start_node=start_node)
+                        score_list.append(ns.score())
 
-            # Appends to dataframe new row of scores computed via different metrics in score_group
-            retval.append(other=pd.Series(data=row, index=col_labels))
+                if __debug__:
+                    print(f'scorer: {col_label}')
+                    print(f'score_list:\n{score_list}')
+                score_dict[col_label].append(aggregate(score_list))
 
-        return retval
+        if __debug__:
+            print(f'final score_dict:\n{score_dict}')
+
+        df = pd.DataFrame(data=score_dict, index=row_labels)
+        return sample_result, df
 
 
-    def sample_stored_graphs(self, n_trials: Iterables[int]=None, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
+    def sample_all_graphs(self, start_node: int=None, n_trials: Iterable[int]=None, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
         """
         Samples each given network during initialization and creates a dataframe with sampling algorithm as row and scoring metric as column. The collection of such dataframes
         are stored into a dict, keyed by network name if it exists or the index of the network during class initialization.
 
         Args:
+            start_node (int, optional): Node where sampling starts to spread. Defaults to None.
             n_trials (Iterable[int], optional): [description]. Defaults to None.
             score_finalizer (str, optional): [description]. Defaults to 'mean'.
             dir_path (str, optional): [description]. Defaults to None.
             n_jobs (int, optional): [description]. Defaults to 1.
 
         Returns:
-            dict[pd.DataFrame]: Dictionary ofdataframes, each being a scoreboard across all given sampling algorithms measured with all given scoring metrics for each network
+            dict[pd.DataFrame]: Dictionary of dataframes, each being a scoreboard across all given sampling algorithms measured with all given scoring metrics for each network
         """
+        # pdb.set_trace(header='NetworkSamplerGrid - sample_all_graphs - Entering')
         retval = dict()
         for index, graph in enumerate(self.graph_group):
             retval[graph['name'] if 'name' in graph else str(index)] = sample_by_graph(graph=graph, n_trials=n_trials[index], score_finalizer=score_finalizer, n_jobs=n_jobs)
