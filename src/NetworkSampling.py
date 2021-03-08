@@ -1,5 +1,5 @@
 
-
+from __future__ import annotations
 from littleballoffur.exploration_sampling import (RandomWalkSampler,
                                                 commonneighborawarerandomwalksampler,
                                                 SnowBallSampler,
@@ -7,6 +7,7 @@ from littleballoffur.exploration_sampling import (RandomWalkSampler,
                                                 FrontierSampler)
 import copy
 from inspect import signature
+import itertools
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
 import multiprocessing as mp
@@ -17,7 +18,6 @@ import pandas as pd
 # import pdb
 # pdb.disable()
 from typing import *
-
 
 # NS = Network Sampling
 class NSMethod(NamedTuple):
@@ -30,6 +30,7 @@ class NSMethod(NamedTuple):
     func: Callable
     params: Dict[str, Any]
 
+#region
 class NetworkSampler:
     """Light-weight, high-level framework used to sample networks with a given algorithm and evalutate the sample according to a given metric."""
     # METHODS
@@ -127,34 +128,6 @@ class NetworkSampler:
 
         self.scorer = new_scorer
 
-    # def tune_single(self, graph: nx.Graph, param_name: str, param_values: Union[Iterable[float], Tuple[float, float]]):
-    #     """[summary]
-
-    #     Args:
-    #         graph (nx.Graph): [description]
-    #         param_name (str): [description]
-    #         param_values (Union[Iterable[float], Tuple[float, float]]): [description]
-    #     """
-    #     pass
-
-    # def tune_multiple(self, graph: nx.Graph, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], n_iter=10, no_improve: int=None):
-    #     """
-    #     Optimize the current sampler for a specific network to sample, given a dictionary 
-
-    #     Args:
-    #         graph (nx.Graph): [description]
-    #         params (Dict[str, Union[Iterable[float], Tuple[float, float]]]): [description]
-    #         n_iter (int, optional): [description]. Defaults to 10.
-    #         no_improve (int, optional): [description]. Defaults to None.
-
-    #     Raises:
-    #         ValueError: [description]
-
-    #     Returns:
-    #         [type]: [description]
-    #     """
-    #     pass
-
     # MUTATORS
     def sample(self, graph: nx.Graph, start_node: int=None) -> nx.Graph:
         """
@@ -216,7 +189,173 @@ class NetworkSampler:
             print(f'score_result: {score_result}')
 
         return sample_result, score_result
+#endregion
 
+def _rescore(ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
+    """
+    Helper function does a re-sampling followed by an immediate re-scoring is completed.
+
+    Args:
+        ns (NetworkSampler): Network sampler to use
+        graph (nx.Graph): Network to sample from
+        start_node (int, optional): Starting node. Defaults to None.
+    """
+    ns.sample(graph, start_node)
+    return ns.score()
+
+#region
+class NetworkSamplerTuner:
+    """
+    Takes a given NetworkSampler object and tunes chosen parameters. Each set of parameter values for testing can either be a bounded interval,
+    which undergoes the bisection method, or a select iterable of test values to scan across.
+    """
+    def __init__(self, nssampler: NetworkSampler, graph: nx.Graph, start_node: int):
+        """
+        Initializes a parameter tuning framework to test on a given netowrk and start node.
+
+        Args:
+            nssampler (NetworkSampler): NetworkSampler object to tune
+            graph (nx.Graph): Network to test on; this should be the same network intended to sample from
+            start_node (int): Node where sampling starts to spread
+        """
+
+        self.nssampler = nssampler
+        self.graph = graph
+        self.start_node = start_node
+
+    def tune_single(self, param_name: str, param_values: Union[Iterable[float], Tuple[float, float]], int_only: bool=False, n_trials: int=1, n_iter: int=10, n_no_improve: int=None):
+        """
+        Tunes a single parameter for a sampler. This assumes all other required parameters are already fixed in __init__ of sampler.
+
+        Args:
+            param_name (str): Name of parameter to tune
+            param_values (Union[Iterable[float], Tuple[float, float]]): Either a list of discretevalues or a bounded interval (2-element tuple)
+                for the bisection method.
+            int_only (bool, optional): Whether only integer values are accepted for the parameter. Defaults to False.
+            n_trials (int, optional): Number of trials to commit for each tested parameter value. The score for that parameter value is the
+                mean over all 'n_trials' trials. Defaults to 1.
+            n_iter (int, optional): Number of iterations to use before stopping; only applies to biseciotn method 'param_values' is a tuple.
+                Defaults to 10.
+            n_no_improve (int, optional): Number of iterations without improvement on best score to confirm stopping. Defaults to None.
+
+        Returns:
+            Union[int, float]: Parameter value that yielded highest score within given constraints of tuner.
+        """
+        sig = signature(self.nssampler.sampler.__init__)
+        if param_name not in sig.parameters:
+            raise ValueError(f'parameter {param_name} is not in __init__ method of sampler {self.sampler}')
+
+        # Variables common to different constraints
+        pool = mp.Pool(processes=mp.cpu_count())
+        score_list = list()  # Temporarily holds scores for the same parameter value over n_trials
+        no_improve_cnt = 0
+        high_score = 0
+        best_param_value = None
+
+        # Use bisection method on bounded itnerval
+        if type(param_values) == tuple:
+            lower_bound = param_values[0]
+            upper_bound = param_values[1]
+            mid = (lower_bound + upper_bound) / 2.0
+            if int_only:
+                mid = int(mid)
+
+            for iter_cnt in np.arange(1, n_iter):
+                print(f'iter_cnt: {iter_cnt}')
+
+                # Sampling and scoring
+                setattr(self.nssampler, param_name, lower_bound)
+                score_list = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in np.arange(n_trials)]).get()
+                lower_bound_score = np.mean(a=score_list, axis=None)
+
+                setattr(self.nssampler, param_name, upper_bound)
+                result = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in np.arange(n_trials)]).get()
+                upper_bound_score = np.mean(a=score_list, axis=None)
+
+                setattr(self.nssampler, param_name, mid)
+                score_list = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in np.arange(n_trials)]).get()
+                mid_score = np.mean(a=score_list, axis=None)
+
+                bounds, bound_scores = [lower_bound, mid, upper_bound], [lower_bound_score, mid_score, upper_bound_score]
+                largest_score_indexes = np.argsort(a=bound_scores, axis=None)[::-1]  # Descending order - leargest to smallest score
+                curr_score = bound_scores[largest_score_indexes[0]]  # Current largest score of the three
+
+                # Evaluate for no improvements
+                if curr_score > high_score:
+                    high_score = curr_score
+                    best_param_value = np.asarray(a=bounds)[largest_score_indexes[0]]
+                    no_improve_cnt = 0
+                else:
+                    no_improve_cnt += 1
+                if n_no_improve is not None and no_improve_cnt >= n_no_improve:
+                    # if __debug__:
+                    print(f'n_no_improve ({n_no_improve}) line crossed')
+                    print(f'best_param_value: {best_param_value}')
+                    return best_param_value
+
+                # if __debug__:
+                print(f'bounds: {bounds}')
+                print(f'bound_scores: {bound_scores}')
+                print(f'largest_score_indexes: {largest_score_indexes}')
+                print(f'curr_score: {curr_score}')
+
+                upper_bound, lower_bound = np.asarray(a=bounds)[largest_score_indexes[:2]]
+                mid = (lower_bound + upper_bound) / 2.0
+                if int_only:
+                    mid = int(mid)
+                iter_cnt += 1
+
+        # Specific iterable of testable values given
+        else:
+            for value in param_values:
+                setattr(self.nssampler, param_name, value)
+                score_list = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in np.arange(n_trials)]).get()
+                curr_score = np.mean(a=score_list, axis=None)
+
+                if curr_score > high_score:
+                    high_score = curr_score
+                    best_param_value = value
+
+                # if __debug__:
+                print(f'value: {value}')
+                print(f'curr_score: {curr_score}')
+
+        # if __debug__:
+        print(f'best_param_value: {best_param_value}')
+
+        return best_param_value
+
+    # def tune_multiple(self, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], int_only: Iterable[bool]=None, n_iter=10, n_no_improve: int=None):
+    #     """
+    #     Optimize the current sampler for a specific network to sample, given a dictionary
+
+    #     Args:
+    #         params (Dict[str, Union[Iterable[float], Tuple[float, float]]]): Dictionary of parameter names and either a list of discretevalues or
+    #                 a bounded interval (2-element tuple) for the bisection method.
+    #         int_only (Iterable[bool], optional): Whether only integer values are accepted for the parameter. Defaults to None.
+    #         n_iter (int, optional): Number of iterations to use before stopping. Defaults to 10.
+    #         n_no_improve (int, optional): Number of iterations without improvement on best score to confor stopping. Defaults to None.
+
+    #     Raises:
+    #         ValueError: One or more specified parameter names do not exist in sampler
+
+    #     Returns:
+    #         Dict[str, Union[int, float]]: Dictionary with the same keys as 'params', but each value is the parameter value for a specific
+    #             parameter with the highest achieved score during tuning.
+    #     """
+    #     itertools.product(*params.values())
+    #     pll = Parallel(n_jobs=mp.cpu_count(), backend='multiprocessing')
+    #     tuned_values = pll()(delayed(self.tune_single)(
+    #     for param_name, param_value, int_only_value, n_iter, n_no_improve)
+    #     retval = dict(zip(params.keys(), tuned_values))
+
+    #     # if __debug__:
+    #     print(f'retval: {retval}')
+    #     return retval
+
+#endregion
+
+#region
 class NetworkSamplerGrid:
     """Compare and contrast different metrics of resulting samples from networks among different sampling algorithms."""
     # METHODS
@@ -239,7 +378,9 @@ class NetworkSamplerGrid:
         """
         # pdb.set_trace(header='NetworkSamplerGrid - __init__ - Entering initializer')
 
-        if len(scorer_names) != len(scorer_group):
+        if len(sampler_names) != len(sampler_group):
+            raise ValueError('The number of names designated for samplers does not equal the number of samplers in scorer_group.')
+        elif len(scorer_names) != len(scorer_group):
             raise ValueError('The number of names designated for scorers does not equal the number of scorers in scorer_group.')
 
         self.graph_group = graph_group
@@ -253,21 +394,9 @@ class NetworkSamplerGrid:
             print(f'Number of samplers: {len(self.sampler_group)}')
             print(f'Number of scorers: {len(self.scorer_group)}')
 
-    def _rescore(self, ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
+    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, n_trials: int=1, aggregate: Callable=np.mean, dir_path: str = None, n_jobs: int = mp.cpu_count()):
         """
-        Internal function to be used by sample_by_graph. Essentially, a re-sampling followed by an immediate re-scoring is completed.
-
-        Args:
-            ns (NetworkSampler): Network sampler to use
-            graph (nx.Graph): Network to sample from
-            start_node (int, optional): Starting node. Defaults to None.
-        """
-        ns.sample(graph, start_node)
-        return ns.score()
-
-    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, n_trials: int = 1, aggregate: Callable=np.mean, dir_path: str = None, n_jobs: int = mp.cpu_count()):
-        """
-        Computes the accuracy
+        Samples a specific network, possibly over many trials and aggregating the score.
 
         Args:
             graph: Graph to sample
@@ -279,7 +408,7 @@ class NetworkSamplerGrid:
             n_jobs (int, optional): Number of jobs to divide sampling across all graphs with multiprocessing. Defaults to 1.
 
         Returns:
-            Tuple[nx.Graph, pd.DataFrame]: The network sample, and a dataframe with sampling algorithm as rows and scores / other data generated by specified metrics as columns, and 
+            pd.DataFrame: Dataframe with sampling algorithm as rows and scores / other data generated by specified metrics as columns, and 
         """
 
         # pdb.set_trace(header='NetworkSamplerGrid - samply_by_graph - Entering function')
@@ -317,22 +446,37 @@ class NetworkSamplerGrid:
                 score_list = list()  # temporary use to hold scores across trials for the same  (sampler, scorer) pair
 
                 try:
-                    score_list = pool.starmap(self._rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)])
+                    result = pool.starmap_async(_rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)])
+                    score_list = result.get()
                 except:
                     for _ in np.arange(n_trials):
                         ns.sample(graph=graph, start_node=start_node)
                         score_list.append(ns.score())
 
-                if __debug__:
-                    print(f'scorer: {col_label}')
-                    print(f'score_list:\n{score_list}')
-                score_dict[col_label].append(aggregate(score_list))
+                # if __debug__:
+                print(f'scorer: {col_label}')
+                print(f'score_list:\n{score_list}')
+
+                # Score is a number
+                if type(score_list[0]) in [int, float, np.int_, np.float_]:
+                    score_dict[col_label].append(aggregate(score_list))
+
+                # Score is an iterable
+                else:
+                    iter_score = score_list[0]
+                    for idx in np.arange(1, n_trials):
+                        iter_score += score_list[idx]
+
+                    if __debug__:
+                        print(f'iter_score:\n{iter_score}')
+
+                    score_dict[col_label].append(iter_score)
 
         if __debug__:
             print(f'final score_dict:\n{score_dict}')
 
         df = pd.DataFrame(data=score_dict, index=row_labels)
-        return sample_result, df
+        return df
 
 
     def sample_all_graphs(self, start_node: int=None, n_trials: Iterable[int]=None, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
@@ -355,3 +499,5 @@ class NetworkSamplerGrid:
         for index, graph in enumerate(self.graph_group):
             retval[graph['name'] if 'name' in graph else str(index)] = sample_by_graph(graph=graph, n_trials=n_trials[index], score_finalizer=score_finalizer, n_jobs=n_jobs)
         return retval
+
+#endregion
