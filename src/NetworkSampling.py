@@ -13,10 +13,13 @@ import matplotlib.pyplot as plt
 import multiprocessing as mp
 import networkx as nx
 import numpy as np
+import os
 import param
 import pandas as pd
 # import pdb
 # pdb.disable()
+
+from tqdm import tqdm
 from typing import *
 
 # NS = Network Sampling
@@ -30,6 +33,14 @@ class NSMethod(NamedTuple):
     func: Callable
     params: Dict[str, Any]
 
+    def __repr__(self):
+        """
+        Representation of NSMethod object.
+
+        Returns:
+            str: Representation of NSMethod object.
+        """
+        return f'<NSMethod: func={repr(self.func)}, params={repr(self.params)}>'
 #region
 class NetworkSampler:
     """Light-weight, high-level framework used to sample networks with a given algorithm and evalutate the sample according to a given metric."""
@@ -52,9 +63,28 @@ class NetworkSampler:
         self.sampler = sampler
         self.scorer = scorer
         self.prev_sample = None
-        if __debug__:
-            print(f'sampler: {self.sampler}')
-            print(f'scorer: {self.scorer}')
+        # if __debug__:
+        print('-' * 20)
+        print(repr(self))
+        print('-' * 20)
+
+    def __str__(self):
+        """
+        String version of NetworkSampler object.
+
+        Returns:
+            str: NetworkSampler object as a string.
+        """
+        return f'(NetworkSampler: sampler={self.sampler.__class__()}, scorer={self.scorer})'
+
+    def __repr__(self):
+        """
+        Representation of NetworkSampler object.
+
+        Returns:
+            str: Representation of NetworkSampler object.
+        """
+        return f'<NetworkSampler: sampler={repr(self.sampler)}, scorer={repr(self.scorer)})'
 
     #ACCESSORS
 #region
@@ -140,6 +170,8 @@ class NetworkSampler:
         Returns:
             nx.Graph: Sampled network.
         """
+        print(f'<sample: graph={repr(graph)}, start_node={start_node}>')
+
         # pdb.set_trace(header='NetworkSampler - sample - Entering sample')
         if __debug__:
             print('sampler attributes:\n')
@@ -154,7 +186,15 @@ class NetworkSampler:
             print(f'_sample parameters: {sig.parameters}')
             print(f'_sample_return_annotation: {sig.return_annotation}')
 
-        self.prev_sample = self.sampler.sample(graph=graph, start_node=start_node)
+        sample_params = dict({'graph': graph})
+
+        if 'start_node' in signature(self.sampler.sample).parameters:
+            sample_params['start_node'] = start_node
+
+        # if __debug__:
+        print(f'sample_params: {sample_params}')
+
+        self.prev_sample = self.sampler.sample(**sample_params)
         return self.prev_sample
 
     def score(self):
@@ -200,6 +240,8 @@ def _rescore(ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
         graph (nx.Graph): Network to sample from
         start_node (int, optional): Starting node. Defaults to None.
     """
+    # if __debug__:
+    print(f'<_rescore: ns={repr(ns)}, graph={repr(graph)}, start_node={start_node}>')
     ns.sample(graph, start_node)
     return ns.score()
 
@@ -223,6 +265,29 @@ class NetworkSamplerTuner:
         self.graph = graph
         self.start_node = start_node
 
+        # if __debug__:
+        print('-' * 20)
+        print(repr(self))
+        print('-' * 20)
+
+    def __str__(self):
+        """
+        String version of NetworkSamplerTuner.
+
+        Returns:
+            str: String version of NetworkSamplerTuner.
+        """
+        return f'(NetworkSamplerTuner: nssampler={nssampler}, graph={self.graph}, start_node={self.start_node})'
+
+    def __repr__(self):
+        """
+        Representation of NetworkSamplerTuner.
+
+        Returns:
+            str: Representation of NetworkSamplerTuner.
+        """
+        return f'<NetworkSamplerTuner: nssampler={repr(self.nssampler)}, graph={repr(self.graph)}, start_node={repr(self.start_node)}>'
+
     def tune_single(self, param_name: str, param_values: Union[Iterable[float], Tuple[float, float]], int_only: bool=False, n_trials: int=1, n_iter: int=10, n_no_improve: int=None):
         """
         Tunes a single parameter for a sampler. This assumes all other required parameters are already fixed in __init__ of sampler.
@@ -241,12 +306,14 @@ class NetworkSamplerTuner:
         Returns:
             Union[int, float]: Parameter value that yielded highest score within given constraints of tuner.
         """
+        print(f'<tune_single: param_name={param_name}, param_values={param_values}, int_only={int_only}, n_trials={n_trials}, n_iter={n_iter}, n_no_improve={n_no_improve}>')
+
         sig = signature(self.nssampler.sampler.__init__)
         if param_name not in sig.parameters:
             raise ValueError(f'parameter {param_name} is not in __init__ method of sampler {self.sampler}')
 
         # Variables common to different constraints
-        pool = mp.Pool(processes=mp.cpu_count())
+        pool = mp.Pool(processes=n_trials)
         score_list = list()  # Temporarily holds scores for the same parameter value over n_trials
         no_improve_cnt = 0
         high_score = 0
@@ -254,13 +321,14 @@ class NetworkSamplerTuner:
 
         # Use bisection method on bounded itnerval
         if type(param_values) == tuple:
+            print('tune_single - option A')
             lower_bound = param_values[0]
             upper_bound = param_values[1]
             mid = (lower_bound + upper_bound) / 2.0
             if int_only:
                 mid = int(mid)
 
-            for iter_cnt in np.arange(1, n_iter):
+            for iter_cnt in tqdm(np.arange(1, n_iter)):
                 print(f'iter_cnt: {iter_cnt}')
 
                 # Sampling and scoring
@@ -307,51 +375,80 @@ class NetworkSamplerTuner:
 
         # Specific iterable of testable values given
         else:
-            for value in param_values:
+            print('tune_single - option B')
+            for value in tqdm(param_values):
+                print(f'value: {value}')
                 setattr(self.nssampler, param_name, value)
-                score_list = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in np.arange(n_trials)]).get()
+                for _ in tqdm(np.arange(n_trials)):
+                    score_list.append(_rescore(self.nssampler, self.graph, self.start_node))
+
                 curr_score = np.mean(a=score_list, axis=None)
 
-                if curr_score > high_score:
-                    high_score = curr_score
-                    best_param_value = value
+                if __debug__:
+                    print(f'score_list: {score_list}')
+                    print(f'curr_score: {curr_score}')
 
-                # if __debug__:
-                print(f'value: {value}')
-                print(f'curr_score: {curr_score}')
+                if high_score < curr_score:
+                    best_param_value = value
+                high_score = max([high_score, curr_score])
 
         # if __debug__:
         print(f'best_param_value: {best_param_value}')
 
         return best_param_value
 
-    # def tune_multiple(self, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], int_only: Iterable[bool]=None, n_iter=10, n_no_improve: int=None):
-    #     """
-    #     Optimize the current sampler for a specific network to sample, given a dictionary
+    def tune_multiple(self, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], n_trials: int=1):
+        """
+        Tune the current sampler for a specific network to sample, given a dictionary of parameter values, using the gridsearchcv heuristic.
 
-    #     Args:
-    #         params (Dict[str, Union[Iterable[float], Tuple[float, float]]]): Dictionary of parameter names and either a list of discretevalues or
-    #                 a bounded interval (2-element tuple) for the bisection method.
-    #         int_only (Iterable[bool], optional): Whether only integer values are accepted for the parameter. Defaults to None.
-    #         n_iter (int, optional): Number of iterations to use before stopping. Defaults to 10.
-    #         n_no_improve (int, optional): Number of iterations without improvement on best score to confor stopping. Defaults to None.
+        Args:
+            params (Dict[str, Union[Iterable[float], Tuple[float, float]]]): Dictionary of parameter names and either a list of discretevalues or
+                    a bounded interval (2-element tuple) for the bisection method.
+            n_trials (int, optional): Number of trials to commit for each tested parameter value. The score for that parameter value is the
+                mean over all 'n_trials' trials. Defaults to 1.
+            n_iter (int, optional): Number of iterations to use before stopping. Defaults to 10.
 
-    #     Raises:
-    #         ValueError: One or more specified parameter names do not exist in sampler
+        Raises:
+            ValueError: One or more specified parameter names do not exist in sampler
 
-    #     Returns:
-    #         Dict[str, Union[int, float]]: Dictionary with the same keys as 'params', but each value is the parameter value for a specific
-    #             parameter with the highest achieved score during tuning.
-    #     """
-    #     itertools.product(*params.values())
-    #     pll = Parallel(n_jobs=mp.cpu_count(), backend='multiprocessing')
-    #     tuned_values = pll()(delayed(self.tune_single)(
-    #     for param_name, param_value, int_only_value, n_iter, n_no_improve)
-    #     retval = dict(zip(params.keys(), tuned_values))
+        Returns:
+            Dict[str, Union[int, float]]: Dictionary with the same keys as 'params', but each value is the parameter value for a specific
+                parameter with the highest achieved score during tuning.
+        """
+        print(f'<tune_multiple: params={params}, n_trials={n_trials}>')
 
-    #     # if __debug__:
-    #     print(f'retval: {retval}')
-    #     return retval
+        param_values = list(itertools.product(*params.values()))
+        pool = mp.Pool(processes=n_trials)
+
+        # if __debug__:
+        print(f'params.values(): {params.values()}')
+        print(f'param_values: {param_values}')
+
+        high_score = 0
+        best_param_tup = tuple(np.zeros(shape=(len(params),)))
+        for param_tup in list(param_values):
+            new_params = dict(zip(params.keys(), param_tup))
+            self.nssampler.sampler.__dict__.update(new_params)
+            score_list = pool.starmap_async(_rescore, [(self.nssampler, self.graph, self.start_node) for _ in tqdm(np.arange(n_trials))]).get()
+            curr_score = np.mean(a=score_list, axis=None)
+
+            if high_score < curr_score:
+                best_param_tup = param_tup
+            high_score = max([high_score, curr_score])
+
+            # if __debug__:
+            print(f'param_tup: {param_tup}')
+            print(f'new_params: {new_params}')
+            print(f'curr_score: {curr_score}')
+
+        # if __debug__:
+        print(f'high_score: {high_score}')
+        print(f'best_param_tup: {best_param_tup}')
+        retval = dict(zip(params.keys(), best_param_tup))
+
+        # if __debug__:
+        print(f'retval: {retval}')
+        return retval
 
 #endregion
 
@@ -359,19 +456,35 @@ class NetworkSamplerTuner:
 class NetworkSamplerGrid:
     """Compare and contrast different metrics of resulting samples from networks among different sampling algorithms."""
     # METHODS
-    def __init__(self, graph_group: Iterable[nx.Graph], sampler_group: Iterable[Any], scorer_group: Iterable[NSMethod], sampler_names: Iterable[str]=None, scorer_names: Iterable[str]=None):
+    def __init__(self, graph_group: Iterable[nx.Graph],
+                sampler_group: Iterable[Any],
+                scorer_group: Iterable[NSMethod],
+                sampler_names: Iterable[str]=None,
+                scorer_names: Iterable[str]=None,
+                dir_path: str=None,
+                csv_names: Iterable[str]=None):
         """Initializes the group of sampling algorithms to compare using one or more scoring metrics.
 
         Args:
-            graph_group (Iterable[nx.Graph]): One or more networks to sample and evaluate. Each graph having a 'name' attribute is recommended for later labeling in tables; if absent, label for a graph will be its 
-                                                0-based index in graph_group.
-            sampler_group (Iterable[Any]): One or more sampling algorithms to apply, either in the form of litleballoffur instances or a custom instance from NEtworkSamplerFunctions.py 
-            scorer_group (Iterable[NSMethod]): One or more scoring metrics to apply to the resulting sampled network using each given sampling algorithm. Each value in 'params' is a fixed constant.
-            sampler_group (Iterable[str]): Collection of string names for each sampler in sampler_group to be used as row labels (indexes); str() value of scroer will be used instead if None. Defaults to None.
-            scorer_names (Iterable[str]): Collection of string names for each scorer in scorer_group to be used as column labels; str() value of scroer will be used instead if None. Defaults to None.
+            graph_group (Iterable[nx.Graph]): One or more networks to sample and evaluate. Each graph having a 'name' attribute is recommended 
+                for later labeling in tables; if absent, label for a graph will be its 0-based index in graph_group.
+            sampler_group (Iterable[Any]): One or more sampling algorithms to apply, either in the form of litleballoffur instances or a custom 
+                instance from NEtworkSamplerFunctions.py
+            scorer_group (Iterable[NSMethod]): One or more scoring metrics to apply to the resulting sampled network using each given sampling 
+                algorithm. Each value in 'params' is a fixed constant.
+            sampler_group (Iterable[str]): Collection of string names for each sampler in sampler_group to be used as row labels (indexes);
+                str() value of scroer will be used instead if None. Defaults to None.
+            scorer_names (Iterable[str]): Collection of string names for each scorer in scorer_group to be used as column labels; str() value of
+                scorer will be used instead if None. Defaults to None.
+            dir_path (str, optional): Path of directory where to store all .csv files. Defaults to None.
+            csv_names (str, optional): Iterable of .csv names to store each dataframe per graph as csv. If None, nothing is stored in disk.
+                If None or empty string is used for some individual graph, the graph name (or index) is used as .csv name. Defaults to None.
 
         Raises:
-            ValueError: The number of names designated for scorers does not equal the number of scorers in scorer_group
+            ValueError: The number of names designated for scorers does not equal the number of scorers in scorer_group.
+            ValueError: The number of names designated for samplers does not equal the number of samplers in scorer_group.
+            ValueError: Given dir_path does not exist in os.
+            ValueError: The number of csv names does not equal the number of graphs.
 
         Returns:
             None:
@@ -382,37 +495,65 @@ class NetworkSamplerGrid:
             raise ValueError('The number of names designated for samplers does not equal the number of samplers in scorer_group.')
         elif len(scorer_names) != len(scorer_group):
             raise ValueError('The number of names designated for scorers does not equal the number of scorers in scorer_group.')
+        elif dir_path is not None and not os.path.exists(path=dir_path):
+            raise ValueError('Given dir_path does not exist in os.')
+        if csv_names is not None and len(csv_names) != len(self.graph_group):
+            raise ValueError(f'The number of csv_names ({len(csv_names)} does not equal the number of graphs ({len(self.graph_group)}))')
 
         self.graph_group = graph_group
         self.sampler_group = sampler_group
         self.sampler_names = sampler_names
         self.scorer_group = scorer_group
         self.scorer_names = scorer_names
+        self.dir_path = dir_path
+        self.csv_names = csv_names
 
         if __debug__:
             print(f'Number of graphs: {len(self.graph_group)}')
             print(f'Number of samplers: {len(self.sampler_group)}')
             print(f'Number of scorers: {len(self.scorer_group)}')
+            print(f'sampler_names: {self.sampler_names}')
+            print(f'scorer_names: {self.scorer_names}')
+            print(f'dir_path: {dir_path}')
+            print(f'csv_names: {self.csv_names}')
 
-    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, n_trials: int=1, aggregate: Callable=np.mean, dir_path: str = None, n_jobs: int = mp.cpu_count()):
+        print(repr(self))
+
+    def __repr__(self):
+        """
+        Representation of NetworkSamplerGrid.
+
+        Returns:
+            str: Representation of NetworkSamplerGrid.
+        """
+        return f"""<NetworkSamplerGrid:
+                    Number of graphs: {len(self.graph_group)}
+                    Number of samplers: {len(self.sampler_group)}
+                    Number of scorers: {len(self.scorer_group)}
+                    sampler_names: {self.sampler_names}
+                    scorer_names: {self.scorer_names}
+                    dir_path: {self.dir_path}
+                    csv_names: {self.csv_names}>
+                """
+
+    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, aggregate: Callable=np.mean, path: str = None, n_trials: int=1):
         """
         Samples a specific network, possibly over many trials and aggregating the score.
 
         Args:
             graph: Graph to sample
             start_node (int, optional): Node where sampling starts to spread. Defaults to None.
+            aggregate (Callable, optional): Aggregation function over n_trials itrals for a specific scoring metric. Must take in an iterable as first parameter. Defaults to np.mean.
+            path (str, optional): Path for directory holdin the pickled results of NetworkSamplerGrid. The extension at the end must be '.pkl'. If None, nothing will be stored in memory. Defaults to None.
             n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end score is a single value from aggregating the scores from all the 
                                         trials. Defaults to 1.
-            aggregate (Callable, optional): Aggregation function over n_trials itrals for a specific scoring metric. Must take in an iterable as first parameter. Defaults to np.mean.
-            dir_path (str, optional): Path for directory holdin the pickled results of NetworkSamplerGrid. The extension at the end must be '.pkl'. If None, nothing will be stored in memory. Defaults to None.
-            n_jobs (int, optional): Number of jobs to divide sampling across all graphs with multiprocessing. Defaults to 1.
 
         Returns:
             pd.DataFrame: Dataframe with sampling algorithm as rows and scores / other data generated by specified metrics as columns, and 
         """
 
         # pdb.set_trace(header='NetworkSamplerGrid - samply_by_graph - Entering function')
-        pool = mp.Pool(processes=16)
+        pool = mp.Pool(processes=128)
         graph_name = graph['name'] if 'name' in graph else str(graph)
         sample_result = None
         row_labels = [str(sampler) for sampler in self.sampler_group] if self.sampler_names is None else self.sampler_names # indexes for dataframe df
@@ -446,8 +587,7 @@ class NetworkSamplerGrid:
                 score_list = list()  # temporary use to hold scores across trials for the same  (sampler, scorer) pair
 
                 try:
-                    result = pool.starmap_async(_rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)])
-                    score_list = result.get()
+                    score_list = pool.starmap_async(_rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)]).get()
                 except:
                     for _ in np.arange(n_trials):
                         ns.sample(graph=graph, start_node=start_node)
@@ -461,7 +601,7 @@ class NetworkSamplerGrid:
                 if type(score_list[0]) in [int, float, np.int_, np.float_]:
                     score_dict[col_label].append(aggregate(score_list))
 
-                # Score is an iterable
+                # Score is an iterable, so a merged iterable of all score iterables (over n_trials) is created
                 else:
                     iter_score = score_list[0]
                     for idx in np.arange(1, n_trials):
@@ -476,28 +616,32 @@ class NetworkSamplerGrid:
             print(f'final score_dict:\n{score_dict}')
 
         df = pd.DataFrame(data=score_dict, index=row_labels)
+
+        if path is not None:
+            df.to_csv(path_or_buf=path)
+
         return df
 
 
-    def sample_all_graphs(self, start_node: int=None, n_trials: Iterable[int]=None, score_finalizer: str = 'mean', dir_path: str = None, n_jobs: int = 1):
+    def sample_all_graphs(self, start_node: int=None, aggregate: Callable=np.mean, paths: Iterable[str] = None, n_trials: Iterable[int]=None, n_jobs: int = 1):
         """
         Samples each given network during initialization and creates a dataframe with sampling algorithm as row and scoring metric as column. The collection of such dataframes
         are stored into a dict, keyed by network name if it exists or the index of the network during class initialization.
 
         Args:
             start_node (int, optional): Node where sampling starts to spread. Defaults to None.
-            n_trials (Iterable[int], optional): [description]. Defaults to None.
-            score_finalizer (str, optional): [description]. Defaults to 'mean'.
-            dir_path (str, optional): [description]. Defaults to None.
-            n_jobs (int, optional): [description]. Defaults to 1.
+            aggregate (Callable, optional): Aggregation function over n_trials itrals for a specific scoring metric. Must take in an iterable as first parameter. Defaults to np.mean.
+            n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end score is a single value from aggregating the scores from all the 
+                                        trials. Defaults to 1.
 
         Returns:
             dict[pd.DataFrame]: Dictionary of dataframes, each being a scoreboard across all given sampling algorithms measured with all given scoring metrics for each network
         """
         # pdb.set_trace(header='NetworkSamplerGrid - sample_all_graphs - Entering')
+
         retval = dict()
-        for index, graph in enumerate(self.graph_group):
-            retval[graph['name'] if 'name' in graph else str(index)] = sample_by_graph(graph=graph, n_trials=n_trials[index], score_finalizer=score_finalizer, n_jobs=n_jobs)
+        for idx, graph in enumerate(self.graph_group):
+            retval[graph['name'] if 'name' in graph else str(idx + 1)] = sample_by_graph(graph=graph, path=None if paths is None else paths[idx], n_trials=n_trials)
         return retval
 
 #endregion
