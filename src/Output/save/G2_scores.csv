@@ -1,0 +1,10 @@
+,degree_sum,dist_var,degree_sum Tuned Params,dist_var Tuned Params
+RandomWalkSampler,51042.8,0.356646465,{},{}
+CommonNeighborAwareRandomWalkSampler,46509,0.353535354,{},{}
+SnowBallSampler,50621.4,0.354888889,{'k': 2},{'k': 3}
+CommunityStructureExpansionSampler,50355.4,0.391545455,{},{}
+CaterpillarQuotaWalkSampler,56207,0.345353535,"{'q1': 0.07, 'q2': 0.29000000000000004}","{'q1': 0.08, 'q2': 0.30000000000000004}"
+,,,,
+,,,,
+,,,,
+,,,,
