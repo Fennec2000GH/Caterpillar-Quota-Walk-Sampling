@@ -23,6 +23,7 @@ from tqdm import tqdm
 from typing import *
 
 # NS = Network Sampling
+#region
 class NSMethod(NamedTuple):
     """Convenient container to hold any function and its parameters as a dict separately, facilitating destructuring later.
 
@@ -41,6 +42,8 @@ class NSMethod(NamedTuple):
             str: Representation of NSMethod object.
         """
         return f'<NSMethod: func={repr(self.func)}, params={repr(self.params)}>'
+#endregion
+
 #region
 class NetworkSampler:
     """Light-weight, high-level framework used to sample networks with a given algorithm and evalutate the sample according to a given metric."""
@@ -63,6 +66,7 @@ class NetworkSampler:
         self.sampler = sampler
         self.scorer = scorer
         self.prev_sample = None
+
         # if __debug__:
         print('-' * 20)
         print(repr(self))
@@ -87,19 +91,6 @@ class NetworkSampler:
         return f'<NetworkSampler: sampler={repr(self.sampler)}, scorer={repr(self.scorer)})'
 
     #ACCESSORS
-#region
-    # @property
-    # def sampler(self):
-    #     """
-    #     Gets current sampler object
-
-    #     Returns:
-    #         Any: Returns currently used sampler object
-    #     """
-    #     return self.sampler
-#endregion
-
-    # @sampler.setter
     def set_sampler(self, new_sampler: Any):
         """
         Resets sampler object.
@@ -123,18 +114,6 @@ class NetworkSampler:
             raise ValueError('\'start_node\' is not a parameter in \'sample\' method of new sampler')
 
         self.sampler = new_sampler
-
-#region
-    # @property
-    # def scorer(self):
-    #     """
-    #     Gets current scorer object.
-
-    #     Returns:
-    #         NSMethod: Returns currently used scoring metric and its parameters
-    #     """
-    #     return self.scorer
-#endregion
 
     def set_scorer(self, new_scorer: NSMethod):
         """
@@ -191,8 +170,8 @@ class NetworkSampler:
         if 'start_node' in signature(self.sampler.sample).parameters:
             sample_params['start_node'] = start_node
 
-        # if __debug__:
-        print(f'sample_params: {sample_params}')
+        if __debug__:
+            print(f'sample_params: {sample_params}')
 
         self.prev_sample = self.sampler.sample(**sample_params)
         return self.prev_sample
@@ -207,7 +186,13 @@ class NetworkSampler:
         if self.prev_sample is None:
             raise ValueError('No calls to \'sample\' method has been made yet.')
 
+        # sampled_nodes = list([n for n in self.prev_sample.nodes])
+
+        if __debug__:
+            print('nodes:\n{sampled_nodes}')
+
         score_func, score_params = self.scorer.func, self.scorer.params
+
         return score_func(graph=self.prev_sample, **score_params)
 
     def sample_and_score(self, graph: nx.Graph, start_node: int=None):
@@ -231,6 +216,28 @@ class NetworkSampler:
         return sample_result, score_result
 #endregion
 
+#region
+class TunedNetworkSampler(NamedTuple):
+    """
+    Network sampler with parameter values specifically tuned for a network and scorer metric.
+
+    Args:
+        ns [NetworkSampler]: NetworkSapler object that is tuned.
+        graph [nx.Graph]: Network 'ns' is tuned on.
+    """
+    ns: NetworkSampler
+    graph: nx.Graph
+
+    def __repr__(self):
+        """
+        Representation of TunedNetworkSampler object.
+
+        Returns:
+            str: Representation of TunedNetworkSampler object.
+        """
+        return f'<TunedNetworkSampler: ns={repr(ns)}, graph={repr(graph)}>'
+#endregion
+
 def _rescore(ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
     """
     Helper function does a re-sampling followed by an immediate re-scoring is completed.
@@ -240,8 +247,9 @@ def _rescore(ns: NetworkSampler, graph: nx.Graph, start_node: int=None):
         graph (nx.Graph): Network to sample from
         start_node (int, optional): Starting node. Defaults to None.
     """
-    # if __debug__:
-    print(f'<_rescore: ns={repr(ns)}, graph={repr(graph)}, start_node={start_node}>')
+    if __debug__:
+        print(f'<_rescore: ns={repr(ns)}, graph={repr(graph)}, start_node={start_node}>')
+
     ns.sample(graph, start_node)
     return ns.score()
 
@@ -288,7 +296,13 @@ class NetworkSamplerTuner:
         """
         return f'<NetworkSamplerTuner: nssampler={repr(self.nssampler)}, graph={repr(self.graph)}, start_node={repr(self.start_node)}>'
 
-    def tune_single(self, param_name: str, param_values: Union[Iterable[float], Tuple[float, float]], int_only: bool=False, n_trials: int=1, n_iter: int=10, n_no_improve: int=None):
+    def tune_single(self,
+                    param_name: str,
+                    param_values: Union[Iterable[float], Tuple[float, float]],
+                    int_only: bool=False,
+                    n_trials: int=1,
+                    n_iter: int=10,
+                    n_no_improve: int=None):
         """
         Tunes a single parameter for a sampler. This assumes all other required parameters are already fixed in __init__ of sampler.
 
@@ -326,6 +340,8 @@ class NetworkSamplerTuner:
             upper_bound = param_values[1]
             mid = (lower_bound + upper_bound) / 2.0
             if int_only:
+                lower_bound = int(lower_bound)
+                upper_bound = int(upper_bound)
                 mid = int(mid)
 
             for iter_cnt in tqdm(np.arange(1, n_iter)):
@@ -370,6 +386,8 @@ class NetworkSamplerTuner:
                 upper_bound, lower_bound = np.asarray(a=bounds)[largest_score_indexes[:2]]
                 mid = (lower_bound + upper_bound) / 2.0
                 if int_only:
+                    lower_bound = int(lower_bound)
+                    upper_bound = int(upper_bound)
                     mid = int(mid)
                 iter_cnt += 1
 
@@ -392,12 +410,14 @@ class NetworkSamplerTuner:
                     best_param_value = value
                 high_score = max([high_score, curr_score])
 
-        # if __debug__:
-        print(f'best_param_value: {best_param_value}')
+        if __debug__:
+            print(f'best_param_value: {best_param_value}')
 
         return best_param_value
 
-    def tune_multiple(self, params: Dict[str, Union[Iterable[float], Tuple[float, float]]], n_trials: int=1):
+    def tune_multiple(self,
+                        params: Dict[str, Union[Iterable[float], Tuple[float, float]]],
+                        n_trials: int=1):
         """
         Tune the current sampler for a specific network to sample, given a dictionary of parameter values, using the gridsearchcv heuristic.
 
@@ -406,7 +426,6 @@ class NetworkSamplerTuner:
                     a bounded interval (2-element tuple) for the bisection method.
             n_trials (int, optional): Number of trials to commit for each tested parameter value. The score for that parameter value is the
                 mean over all 'n_trials' trials. Defaults to 1.
-            n_iter (int, optional): Number of iterations to use before stopping. Defaults to 10.
 
         Raises:
             ValueError: One or more specified parameter names do not exist in sampler
@@ -420,9 +439,9 @@ class NetworkSamplerTuner:
         param_values = list(itertools.product(*params.values()))
         pool = mp.Pool(processes=n_trials)
 
-        # if __debug__:
-        print(f'params.values(): {params.values()}')
-        print(f'param_values: {param_values}')
+        if __debug__:
+            print(f'params.values(): {params.values()}')
+            print(f'param_values: {param_values}')
 
         high_score = 0
         best_param_tup = tuple(np.zeros(shape=(len(params),)))
@@ -436,18 +455,16 @@ class NetworkSamplerTuner:
                 best_param_tup = param_tup
             high_score = max([high_score, curr_score])
 
-            # if __debug__:
+        if __debug__:
             print(f'param_tup: {param_tup}')
             print(f'new_params: {new_params}')
             print(f'curr_score: {curr_score}')
+            print(f'high_score: {high_score}')
+            print(f'best_param_tup: {best_param_tup}')
 
-        # if __debug__:
-        print(f'high_score: {high_score}')
-        print(f'best_param_tup: {best_param_tup}')
         retval = dict(zip(params.keys(), best_param_tup))
+        # print(f'retval: {retval}')
 
-        # if __debug__:
-        print(f'retval: {retval}')
         return retval
 
 #endregion
@@ -483,6 +500,7 @@ class NetworkSamplerGrid:
         Raises:
             ValueError: The number of names designated for scorers does not equal the number of scorers in scorer_group.
             ValueError: The number of names designated for samplers does not equal the number of samplers in scorer_group.
+            ValueError: The number of parameter dicts in tuned_params does not equal the number of samplers in sampler_group.
             ValueError: Given dir_path does not exist in os.
             ValueError: The number of csv names does not equal the number of graphs.
 
@@ -490,16 +508,16 @@ class NetworkSamplerGrid:
             None:
         """
         # pdb.set_trace(header='NetworkSamplerGrid - __init__ - Entering initializer')
-
         if len(sampler_names) != len(sampler_group):
-            raise ValueError('The number of names designated for samplers does not equal the number of samplers in scorer_group.')
+            raise ValueError(f'The number of names designated for samplers ({len(sampler_names)}) does not equal the number of samplers in sampler_group ({len(sampler_group)}).')
         elif len(scorer_names) != len(scorer_group):
-            raise ValueError('The number of names designated for scorers does not equal the number of scorers in scorer_group.')
+            raise ValueError(f'The number of names designated for scorers ({len(scorer_names)}) does not equal the number of scorers in scorer_group ({len(scorer_group)}).')
         elif dir_path is not None and not os.path.exists(path=dir_path):
             raise ValueError('Given dir_path does not exist in os.')
-        if csv_names is not None and len(csv_names) != len(self.graph_group):
-            raise ValueError(f'The number of csv_names ({len(csv_names)} does not equal the number of graphs ({len(self.graph_group)}))')
+        elif csv_names is not None and len(csv_names) != len(graph_group):
+            raise ValueError(f'The number of csv_names ({len(csv_names)} does not equal the number of graphs ({len(graph_group)}))')
 
+        # Essential parameters
         self.graph_group = graph_group
         self.sampler_group = sampler_group
         self.sampler_names = sampler_names
@@ -508,10 +526,14 @@ class NetworkSamplerGrid:
         self.dir_path = dir_path
         self.csv_names = csv_names
 
+        # stores TunedNetworkSampler organized as dict of dict of dicts with key hierarchy being network -> scorer -> network sampling algorithm
+        self.tuned_ns = dict()
+
         if __debug__:
             print(f'Number of graphs: {len(self.graph_group)}')
             print(f'Number of samplers: {len(self.sampler_group)}')
             print(f'Number of scorers: {len(self.scorer_group)}')
+            print(f'Number of tuned parameters: {len(self.tuned_params)}')
             print(f'sampler_names: {self.sampler_names}')
             print(f'scorer_names: {self.scorer_names}')
             print(f'dir_path: {dir_path}')
@@ -536,7 +558,56 @@ class NetworkSamplerGrid:
                     csv_names: {self.csv_names}>
                 """
 
-    def sample_by_graph(self, graph: nx.Graph, start_node: int=None, aggregate: Callable=np.mean, path: str = None, n_trials: int=1):
+    def set_tuner(self,
+                    tuned_params: Iterable[Dict[str, Any]],
+                    int_only: Iterable[bool]=None,
+                    n_trials_tune: int=1,
+                    n_no_improve: int=None):
+        """
+        Sets parameter values for NetworkSamplerTuner used in tuning before sampling a network.
+
+        Raises:
+            ValueError: The number of parameter dicts in tune_params does not equal the number of samplers in sampler_group.
+            ValueError: The length of int_only does not equal the length of sampler_group.
+            ValueError: n_trials_tune is not a positive integer.
+            ValueError: n_no_improve exists and is not a positive integer.
+
+        Args:
+            tuned_params (str, optional): Iterable of parameter dicts, with key being parameter name and value being testable values. If not None, 
+                length of 'tuned_params' must be equal to the length of 'sampler_group'. Defaults to empty list.
+            int_only (Iterable[bool], optional): if at least one parameter must be integer values, a boolean iterable teh same length as 
+                self.sampler_group is required to indicate which ones are itneger parameters. Defaults to None.
+            n_trials_tune (int, optional): Number of trials to tune each sampler per scorer metric and network before aggregating s final score.
+                Defaults to 1.
+            n_no_improve (int, optional): Number of iterations without improvement on best score to confirm stopping. Defaults to None.
+        """
+        if len(tuned_params) != len(self.sampler_group):
+            raise ValueError(f'The number of parameter dicts in tune_params ({len(tuned_params)}) does not equal the number of samplers in sampler_group ({len(sampler_names)}).')
+        elif int_only is not None and len(int_only) != len(self.sampler_group):
+            raise ValueError(f'The length of int_only ({len(int_only)}) does not equal the length of sampler_group ({len(self.sampler_group)}).')
+        elif n_trials_tune <= 0:
+            raise ValueError('n_trials_tune ({n_trials_tune}) is not a positive integer.')
+        elif n_no_improve is not None and n_no_improve <= 0:
+            raise ValueError(f'n_no_improve ({n_no_improve}) exists and is not a positive integer.')
+
+        # Tuning parameters
+        self.tuned_params = tuned_params
+        self.int_only = int_only
+        self.n_trials_tune = n_trials_tune
+        self.n_no_improve = n_no_improve
+
+        # if __debug__:
+        print(f'tuned_params: {self.tuned_params}')
+        print(f'int_only: {self.int_only}')
+        print(f'n_trials_tune: {self.n_trials_tune}')
+        print(f'n_no_improve: {self.n_no_improve}')
+
+    def sample_by_graph(self,
+                        graph: nx.Graph,
+                        start_node: int=None,
+                        aggregate: Callable=np.mean,
+                        csv_name: str=None,
+                        n_trials: int=1):
         """
         Samples a specific network, possibly over many trials and aggregating the score.
 
@@ -544,9 +615,10 @@ class NetworkSamplerGrid:
             graph: Graph to sample
             start_node (int, optional): Node where sampling starts to spread. Defaults to None.
             aggregate (Callable, optional): Aggregation function over n_trials itrals for a specific scoring metric. Must take in an iterable as first parameter. Defaults to np.mean.
-            path (str, optional): Path for directory holdin the pickled results of NetworkSamplerGrid. The extension at the end must be '.pkl'. If None, nothing will be stored in memory. Defaults to None.
-            n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end score is a single value from aggregating the scores from all the 
-                                        trials. Defaults to 1.
+            csv_name (str, optional): CSV name to store NetworkSamplerGrid score dataframe as .csv file. The extension at the end must be '.csv'. If None,
+                nothing will be stored in memory. If 'dir_path' is initialized, the .csv file will be stored in that directory. Defaults to None.
+            n_trials (int, optional): The number of times to run the each sampling algorithm when evalutating with the same scoring metric. The end 
+                score is a single value from aggregating the scores from all the trials. Defaults to 1.
 
         Returns:
             pd.DataFrame: Dataframe with sampling algorithm as rows and scores / other data generated by specified metrics as columns, and 
@@ -559,8 +631,13 @@ class NetworkSamplerGrid:
         row_labels = [str(sampler) for sampler in self.sampler_group] if self.sampler_names is None else self.sampler_names # indexes for dataframe df
         col_labels = [str(scorer) for scorer in self.scorer_group] if self.scorer_names is None else self.scorer_names
         score_dict = dict()
-        for col_name in self.scorer_names:
-            score_dict.update({col_name:list()})
+
+        # Setting up initial empty lists for each column in dataframe
+        for col_label in self.scorer_names:
+            score_dict[col_label] = list()
+
+        for col_label in self.scorer_names:
+            score_dict[col_label + ' Tuned Params'] = list()
 
         if __debug__:
             print(f'row_labels: {row_labels}')
@@ -568,29 +645,64 @@ class NetworkSamplerGrid:
             print(f'initial score_dict:\n{score_dict}')
 
         # pdb.set_trace(header='NetworkSamplerGrid - sample_by_graph - Sampling chose graph with each provided sampling algorithm')
-        for row_label, sampler in zip(row_labels, self.sampler_group):
+        for row_idx, row_tup in enumerate(zip(row_labels, self.sampler_group)):
+            row_label, sampler = row_tup
+
             if __debug__:
                 print(f'sampler: {row_label}')
 
             # Initializing sampler and sampling
             ns = NetworkSampler(sampler=sampler, scorer=None)
-            sample_result = ns.sample(graph=graph, start_node=start_node)
 
             # Drawing and saving sample
-            nx.draw(G=sample_result, pos=nx.spring_layout(G=sample_result))
-            plt.show(block=False)
-            plt.savefig(f'./Graph Plots/{graph_name}_{row_label}.jpg', format='JPG')
+            # sample_result = ns.sample(graph=graph, start_node=start_node)
+            # nx.draw(G=sample_result, pos=nx.spring_layout(G=sample_result))
+            # plt.show(block=False)
+            # plt.savefig(fname=f'./Graph Plots/{graph_name}_{row_label}.jpg', format='JPG')
 
             for col_label, scorer in zip(col_labels, self.scorer_group):
                 # Computing score / distribution
                 ns.set_scorer(new_scorer=scorer)
                 score_list = list()  # temporary use to hold scores across trials for the same  (sampler, scorer) pair
 
+                # Possible tuning of parameters
+                best_params_dict = dict()  # stores best parameter values as dict values to the chosen parameters to tune as keys
+                if self.tuned_params is not None and self.tuned_params[row_idx] is not None:
+                    nstuner = NetworkSamplerTuner(nssampler=ns, graph=graph, start_node=start_node)
+                    tuned_params_dict = self.tuned_params[row_idx]
+
+                    # Only a single parameter to tune
+                    if len(tuned_params_dict) == 1:
+                        single_param_key, single_param_val = list(tuned_params_dict.items())[0]
+
+                        if __debug__:
+                            print(f'single_param_key: {single_param_key}')
+                            print(f'single_param val: {single_param_val}')
+
+                        best_params_dict[single_param_key] = nstuner.tune_single(param_name=single_param_key,
+                                                                                param_values=single_param_val,
+                                                                                int_only=self.int_only,
+                                                                                n_trials=self.n_trials_tune)
+                    # Multiple parameters to tune
+                    else:
+                        best_params_dict = nstuner.tune_multiple(params=tuned_params_dict, n_trials=self.n_trials_tune)
+
+                    # Each sampler itself if modified to accept tuned parameters
+                    ns.sampler.__dict__.update(best_params_dict)
+
+                    # Saving tuned network sampler
+                    # self.tuned_ns[graph][col_label][row_label] = copy.deepcopy(x=ns)
+
+                    if __debug__:
+                        print(f'Sampler after tuning: {ns.sampler}')
+
                 try:
                     score_list = pool.starmap_async(_rescore, [(ns, graph, start_node) for _ in np.arange(n_trials)]).get()
                 except:
                     for _ in np.arange(n_trials):
                         ns.sample(graph=graph, start_node=start_node)
+                        if start_node not in ns.prev_sample:
+                            raise ValueError('start_node lost during sampling')
                         score_list.append(ns.score())
 
                 # if __debug__:
@@ -605,25 +717,31 @@ class NetworkSamplerGrid:
                 else:
                     iter_score = score_list[0]
                     for idx in np.arange(1, n_trials):
-                        iter_score += score_list[idx]
+                        iter_score = iter_score.update(score_list[idx])
 
                     if __debug__:
                         print(f'iter_score:\n{iter_score}')
 
                     score_dict[col_label].append(iter_score)
 
+                score_dict[col_label + ' Tuned Params'].append(best_params_dict)
+
         if __debug__:
             print(f'final score_dict:\n{score_dict}')
 
         df = pd.DataFrame(data=score_dict, index=row_labels)
 
-        if path is not None:
+        if csv_name is not None:
+            path = './' + csv_name if self.dir_path is None else os.path.join(self.dir_path, csv_name)
             df.to_csv(path_or_buf=path)
 
         return df
 
 
-    def sample_all_graphs(self, start_node: int=None, aggregate: Callable=np.mean, paths: Iterable[str] = None, n_trials: Iterable[int]=None, n_jobs: int = 1):
+    def sample_all_graphs(self,
+                        start_node: int=None,
+                        aggregate: Callable=np.mean,
+                        n_trials: Iterable[int]=None):
         """
         Samples each given network during initialization and creates a dataframe with sampling algorithm as row and scoring metric as column. The collection of such dataframes
         are stored into a dict, keyed by network name if it exists or the index of the network during class initialization.
@@ -641,7 +759,8 @@ class NetworkSamplerGrid:
 
         retval = dict()
         for idx, graph in enumerate(self.graph_group):
-            retval[graph['name'] if 'name' in graph else str(idx + 1)] = sample_by_graph(graph=graph, path=None if paths is None else paths[idx], n_trials=n_trials)
+            df = self.sample_by_graph(graph=graph, start_node=start_node, csv_name=None if self.csv_names is None else self.csv_names[idx], n_trials=n_trials)
+            retval[graph] = df
         return retval
 
 #endregion
