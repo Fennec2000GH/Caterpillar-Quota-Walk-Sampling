@@ -1,4 +1,10 @@
 # Created by .ignore support plugin (hsz.mobi)
+.DS_store
 .env
 .idea
+.ipynb_checkpoints
+.mypy_cache
 .vscode
+.pytest_cache
+__pycache__
+node_modules
